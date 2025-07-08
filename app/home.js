@@ -1,475 +1,751 @@
-import { View, Text, TouchableOpacity, StyleSheet, Alert, TextInput, Image, FlatList, Modal } from "react-native";
-import { router } from "expo-router";
-import { auth } from "../firebaseConfig";
-import { signOut } from "firebase/auth";
-import { getFirestore, collection, query, where, getDocs, doc, setDoc, getDoc, onSnapshot } from "firebase/firestore";
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator, Alert, Image, ScrollView, Dimensions } from 'react-native';
+import { signOut } from 'firebase/auth';
+import { auth, firestore } from '../firebaseConfig';
+import { collection, query, where, orderBy, getDocs, Timestamp, getDoc, doc } from 'firebase/firestore';
+import { router } from 'expo-router';
+import { MaterialIcons } from '@expo/vector-icons';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import * as Location from 'expo-location';
+import { Picker } from '@react-native-picker/picker';
+import FooterNav from '../components/FooterNav';
+import HeaderBar from '../components/HeaderBar';
+import { useTheme } from '../contexts/ThemeContext';
+import OnboardingStepper from '../components/OnboardingStepper';
+const aiStar = require('../assets/images/aistar.png');
 
-const db = getFirestore();
 
-export default function HomeScreen() {
-  const [imageUrl, setImageUrl] = useState("");
-  const [storedImageUrl, setStoredImageUrl] = useState(null);
-  const [nickname, setNickname] = useState("");
-  const [searchQuery, setSearchQuery] = useState("");
-  const [userSuggestions, setUserSuggestions] = useState([]);
-  const [chatList, setChatList] = useState([]);
-  const [modalVisible, setModalVisible] = useState(false);
-  const [dropdownVisible, setDropdownVisible] = useState(false);
+const SCREEN_WIDTH = Dimensions.get('window').width;
+const placeholderImage = require('../assets/images/placeholder.png');
+const anonymousAvatar = 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png';
 
-  const user = auth.currentUser;
+function formatTimeRemaining(expiresAt) {
+  if (!expiresAt) return 'Expired';
+  const now = new Date();
+  const expirationDate = expiresAt instanceof Timestamp ? expiresAt.toDate() : new Date(expiresAt);
+  if (!expirationDate || expirationDate < now) return 'Expired';
+  const diff = expirationDate.getTime() - now.getTime();
+  const diffSec = Math.floor(diff / 1000);
+  const days = Math.floor(diffSec / (60 * 60 * 24));
+  const hours = Math.floor((diffSec % (60 * 60 * 24)) / (60 * 60));
+  const minutes = Math.floor((diffSec % (60 * 60)) / 60);
+  const seconds = diffSec % 60;
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+function normalizeTag(tag) {
+  const t = tag.toLowerCase();
+  if (t.length > 3 && t.endsWith('s')) return t.slice(0, -1);
+  return t;
+}
+
+export default function Home() {
+  const { colors } = useTheme();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [radius, setRadius] = useState('10');
+  const [userPreferredRadius, setUserPreferredRadius] = useState('10');
+  const [posts, setPosts] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [selectedTag, setSelectedTag] = useState(null);
+  const [userLocation, setUserLocation] = useState(null);
+  const [showSearchResults, setShowSearchResults] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+
+  // Fetch user's preferred radius from settings
+  useEffect(() => {
+    const fetchUserSettings = async () => {
+      if (!auth.currentUser) return;
+      try {
+        const userDocRef = doc(firestore, 'users', auth.currentUser.uid);
+        const userDoc = await getDoc(userDocRef);
+          if (userDoc.exists()) {
+          const userData = userDoc.data();
+          if (userData.settings?.radius) {
+            setUserPreferredRadius(userData.settings.radius);
+            setRadius(userData.settings.radius);
+          }
+        }
+    } catch (err) {
+        console.error('Error fetching user settings:', err);
+    }
+  };
+
+    fetchUserSettings();
+  }, []);
 
   useEffect(() => {
-    if (user) {
-      // Fetch user profile data
-      const userRef = collection(db, "users");
-      getDocs(query(userRef, where("uid", "==", user.uid))).then((snapshot) => {
-        if (!snapshot.empty) {
-          const userData = snapshot.docs[0].data();
-          setStoredImageUrl(userData.profileImageUrl);
-          setNickname(userData.nickname);
-        }
-      });
+    (async () => {
+      setLoading(true);
+      try {
+        // Fetch posts
+        const postsQuery = query(
+          collection(firestore, 'posts'),
+          where('expiresAt', '>', Timestamp.now()),
+          orderBy('expiresAt', 'desc')
+        );
+        const querySnapshot = await getDocs(postsQuery);
+        const postsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        setPosts(postsData);
+        // Fetch users
+        const usersRef = collection(firestore, 'users');
+        const usersSnapshot = await getDocs(usersRef);
+        setUsers(usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+    } catch (err) {
+        setError('Failed to load posts. Please try again.');
+      } finally {
+        setLoading(false);
+    }
+    })();
+    // Get user location using expo-location
+    (async () => {
+      let { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setUserLocation(null);
+        return;
+      }
+      let loc = await Location.getCurrentPositionAsync({});
+      setUserLocation({ lat: loc.coords.latitude, lng: loc.coords.longitude });
+    })();
+  }, []);
 
-      // Set up real-time listener for chats
-      const chatRef = collection(db, "chats");
-      const userChatQuery = query(chatRef, where("participants", "array-contains", user.uid));
-      
-      const unsubscribe = onSnapshot(userChatQuery, async (snapshot) => {
-        const chatsPromises = snapshot.docs.map(async (document) => {
-          const chatData = document.data();
-          const otherUserId = chatData.participants.find((id) => id !== user.uid);
-
-          // Get other user information
-          const userRef = doc(db, "users", otherUserId);
-          const userDoc = await getDoc(userRef);
-
-          if (userDoc.exists()) {
-            const otherUserData = userDoc.data();
-            let lastMessageText = chatData.lastMessage?.text || "No messages yet";
-            let unreadCount = chatData.unreadCounts?.[user.uid] || 0;
-            
-            // Check if all participants have read the last message
-            let allParticipantsRead = false;
-            if (chatData.lastMessage?.readBy && chatData.participants) {
-              allParticipantsRead = chatData.participants.every(
-                participantId => chatData.lastMessage.readBy.includes(participantId)
-              );
-            }
-            
-            let isMessageFromUser = chatData.lastMessage?.senderId === user.uid;
-
-            return {
-              id: document.id,
-              username: otherUserData.username || "User",
-              profileImageUrl: otherUserData.profileImageUrl,
-              lastMessage: lastMessageText,
-              timestamp: chatData.lastMessage?.timestamp || chatData.createdAt,
-              unreadCount,
-              lastMessageRead: allParticipantsRead,
-              isMessageFromUser
-            };
+  useEffect(() => {
+    const checkFirstVisit = async () => {
+      if (auth.currentUser) {
+        try {
+          const userDoc = await getDoc(doc(firestore, 'users', auth.currentUser.uid));
+          if (userDoc.exists() && !userDoc.data().nickname) {
+            setShowOnboarding(true);
           }
-          return null;
-        });
+        } catch (error) {
+          console.error('Error checking first visit:', error);
+        }
+      }
+    };
+    checkFirstVisit();
+  }, []);
 
-        const chats = (await Promise.all(chatsPromises))
-          .filter(chat => chat !== null)
-          .sort((a, b) => {
-            const aTime = a.timestamp?.toDate() || new Date(0);
-            const bTime = b.timestamp?.toDate() || new Date(0);
-            return bTime - aTime;
-          });
-
-        setChatList(chats);
-      }, (error) => {
-        console.error("Error in chat listener:", error);
-      });
-
-      // Clean up listener when component unmounts
-      return () => unsubscribe();
-    }
-  }, [user]);
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      router.replace("/signin");
-    } catch (error) {
-      Alert.alert("Logout Failed", error.message);
-    }
+  // Calculate distance between two points using Haversine formula
+  const calculateDistance = (lat1, lon1, lat2, lon2) => {
+    const R = 6371; // Radius of the earth in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2); 
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    const distance = R * c; // Distance in km
+    return distance;
   };
 
-  const handleProfileImageSubmit = async () => {
-    if (!imageUrl || !isValidImageUrl(imageUrl)) {
-      Alert.alert("Invalid image URL.");
+  // Filtered users for search
+  const filteredUsers = users.filter(user => {
+    const searchTerm = searchQuery.toLowerCase().trim();
+    const displayName = (user.displayName || '').toLowerCase();
+    const nickname = (user.nickname || '').toLowerCase();
+    return displayName.includes(searchTerm) || nickname.includes(searchTerm);
+  });
+
+  const filteredPosts = posts.filter(post => {
+    let verification_tag = false;
+    let expired_tag = true;
+
+    // ✅ Show only Approved posts
+    if (post.verification_status === 'Approved') {
+      verification_tag = true;
+    }
+
+    // ✅ Exclude expired posts
+    const now = Timestamp.now().toMillis();
+    const expirationTime = post.expiresAt?.toMillis();
+    if (!expirationTime || expirationTime < now) {
+      expired_tag = false;
+    }
+
+    // ✅ Match tags
+    const matchesTags = post.tags?.some(tag => {
+      const normalizedPostTag = normalizeTag(tag);
+      const normalizedSearchQuery = normalizeTag(searchQuery);
+      return normalizedPostTag.includes(normalizedSearchQuery) ||
+             normalizedSearchQuery.includes(normalizedPostTag);
+    });
+
+    // ✅ Match username or anonymous
+    const matchesUsername =
+      post.username?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (post.isAnonymous && searchQuery.toLowerCase() === 'anonymous');
+
+    // ✅ Match title/caption
+    let matchesSearch = true;
+    if (searchQuery.trim() !== '') {
+      matchesSearch =
+        post.title?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        post.caption?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        matchesTags ||
+        matchesUsername;
+    }
+
+    // ✅ Match selected tag (from filter chips)
+    const matchesTag = !selectedTag ||
+      post.tags?.some(tag => {
+        const normalizedPostTag = normalizeTag(tag);
+        const normalizedSelectedTag = normalizeTag(selectedTag);
+        return normalizedPostTag.includes(normalizedSelectedTag) ||
+               normalizedSelectedTag.includes(normalizedPostTag);
+      });
+
+    // ✅ Match radius
+    const matchesRadius =
+      !userLocation || !post.location || searchQuery.trim() !== '' || selectedTag
+        ? true
+        : calculateDistance(
+            userLocation.lat,
+            userLocation.lng,
+            post.location.latitude,
+            post.location.longitude
+          ) <= parseInt(radius);
+
+    return matchesSearch && matchesTag && matchesRadius && verification_tag && expired_tag;
+  });
+
+  const handleCardPress = (postId) => {
+    router.push(`/posts/${postId}`);
+  };
+
+  const handleTagPress = (tag) => {
+    setSelectedTag(tag === selectedTag ? null : tag);
+    setSearchQuery('');
+  };
+
+  const handleUserClick = (userId) => {
+    router.push(`/users/${userId}`);
+    setShowSearchResults(false);
+    setSearchQuery('');
+  };
+
+  const handleSearch = () => {
+    if (searchQuery.trim() === '') {
+      setShowSearchResults(false);
       return;
     }
-    try {
-      const userRef = doc(db, "users", user.uid);
-      await setDoc(userRef, { profileImageUrl: imageUrl }, { merge: true });
-      setStoredImageUrl(imageUrl);
-      setImageUrl("");
-      setModalVisible(false);
-      Alert.alert("Profile image updated successfully!");
-    } catch (err) {
-      Alert.alert("Failed to update profile image", err.message);
-    }
+    setShowSearchResults(true);
   };
 
-  const handleRemoveProfileImage = async () => {
-    try {
-      const userRef = doc(db, "users", user.uid);
-      await setDoc(userRef, { profileImageUrl: null }, { merge: true });
-      setStoredImageUrl(null);
-      Alert.alert("Profile image removed!");
-    } catch (err) {
-      Alert.alert("Error", err.message);
-    }
-  };
-
-  const isValidImageUrl = (url) => url.match(/\.(jpeg|jpg|gif|png|webp)$/i);
-
-  const openChat = async (chatId) => {
-    await resetUnreadCount(chatId);
-    router.push({ pathname: "/chat", params: { chatId } });
-  };
-
-  const resetUnreadCount = async (chatId) => {
-    try {
-      const chatRef = doc(db, "chats", chatId);
-      const chatDoc = await getDoc(chatRef);
-
-      if (chatDoc.exists()) {
-        const chatData = chatDoc.data();
-        const unreadCounts = chatData.unreadCounts || {};
-        unreadCounts[user.uid] = 0;
-
-        await setDoc(chatRef, { unreadCounts }, { merge: true });
-      }
-    } catch (err) {
-      console.error("Error resetting unread count:", err);
-    }
-  };
-
-  const handleSearch = async (text) => {
-    setSearchQuery(text);
-    if (!text) return setUserSuggestions([]);
-
-    try {
-      const usersRef = collection(db, "users");
-      const q = query(usersRef, where("username", ">=", text), where("username", "<=", text + "\uf8ff"));
-      const snap = await getDocs(q);
-      const results = [];
-
-      snap.forEach((doc) => {
-        if (doc.data().uid !== user.uid) {
-          results.push({ id: doc.id, ...doc.data() });
-        }
-      });
-
-      setUserSuggestions(results);
-    } catch (err) {
-      console.error("Error searching:", err);
-    }
-  };
-
-  const formatMessageTime = (timestamp) => {
-    if (!timestamp) return "";
-    
-    const messageDate = timestamp.toDate();
-    const now = new Date();
-    
-    // Same day - show time
-    if (messageDate.toDateString() === now.toDateString()) {
-      return messageDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    }
-    
-    // Within a week - show day name
-    const diffDays = Math.floor((now - messageDate) / (1000 * 60 * 60 * 24));
-    if (diffDays < 7) {
-      return messageDate.toLocaleDateString([], { weekday: 'short' });
-    }
-    
-    // Otherwise show date
-    return messageDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
-  };
-
-  const openUserProfile = (selectedUser) => {
-    setSearchQuery("");
-    setUserSuggestions([]);
-    router.push({
-      pathname: "/userProfile",
-      params: {
-        userId: selectedUser.uid,
-        username: selectedUser.username,
-        nickname: selectedUser.nickname,
-        profileImageUrl: selectedUser.profileImageUrl
-      }
-    });
-  };
+  if (loading) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.background }]}> 
+        <ActivityIndicator size="large" color={colors.primary} />
+      </View>
+    );
+  }
+  if (error) {
+    return (
+      <View style={[styles.centered, { backgroundColor: colors.background }]}> 
+        <Text style={[styles.error, { color: colors.error }]}>{error}</Text>
+      </View>
+    );
+  }
 
   return (
-    <View style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>Hi {nickname || "User"}</Text>
-        <TouchableOpacity onPress={() => setDropdownVisible(!dropdownVisible)}>
-          <Image
-            source={storedImageUrl ? { uri: storedImageUrl } : require("../assets/images/placeholder.png")}
-            style={styles.profileImage}
-          />
-        </TouchableOpacity>
-      </View>
-
-      {/* Dropdown */}
-      {dropdownVisible && (
-        <View style={styles.dropdownMenu}>
-          <TouchableOpacity onPress={() => { setModalVisible(true); setDropdownVisible(false); }} style={styles.dropdownItem}>
-            <Text>Edit Profile</Text>
-          </TouchableOpacity>
-          <TouchableOpacity onPress={() => { setDropdownVisible(false); router.push("/settings"); }} style={styles.dropdownItem}>
-          <Text>Settings</Text>
-          </TouchableOpacity>
-
-          <TouchableOpacity onPress={handleLogout} style={styles.dropdownItem}>
-            <Text>Logout</Text>
-          </TouchableOpacity>
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <HeaderBar />
+      <OnboardingStepper visible={showOnboarding} onClose={() => setShowOnboarding(false)} />
+      <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={{ padding: 16 }}>
+        <View style={[styles.searchContainer]}>
+          <View style={[styles.searchInputContainer, { backgroundColor: colors.card }]}> 
+            <MaterialIcons name="search" size={20} color={colors.placeholder} style={styles.searchIcon} />
+            <TextInput
+              style={[styles.searchInput, { color: colors.text }]}
+              placeholder="Search posts, users, or tags..."
+              placeholderTextColor={colors.placeholder}
+              value={searchQuery}
+              onChangeText={text => {
+                setSearchQuery(text);
+                handleSearch();
+              }}
+            />
+          </View>
         </View>
-      )}
-
-      {/* Modal */}
-      <Modal visible={modalVisible} animationType="slide" transparent={true}>
-        <View style={styles.modalContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Paste your image URL"
-            value={imageUrl}
-            onChangeText={setImageUrl}
-          />
-          <TouchableOpacity style={styles.submitButton} onPress={handleProfileImageSubmit}>
-            <Text style={styles.buttonText}>Set Profile Image</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.removeButton} onPress={handleRemoveProfileImage}>
-            <Text style={styles.buttonText}>Remove Profile Image</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.closeButton} onPress={() => setModalVisible(false)}>
-            <Text style={styles.buttonText}>Cancel</Text>
-          </TouchableOpacity>
-        </View>
-      </Modal>
-
-      {/* Search */}
-      <TextInput
-        style={styles.searchBar}
-        placeholder="Search users..."
-        value={searchQuery}
-        onChangeText={handleSearch}
-      />
-
-      {/* Suggestions */}
-      {userSuggestions.length > 0 && (
-        <FlatList
-          data={userSuggestions}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.suggestionItem} onPress={() => openUserProfile(item)}>
-              <Image
-                source={item.profileImageUrl ? { uri: item.profileImageUrl } : require("../assets/images/placeholder.png")}
-                style={styles.suggestionImage}
-              />
-              <Text style={styles.suggestionText}>{item.username}</Text>
+        <View style={styles.radiusContainer}>
+          <Text style={[styles.radiusLabel, { color: colors.textSecondary }]}>Content Radius</Text>
+          <View style={[styles.radiusDropdown, { backgroundColor: colors.card }]}> 
+            <Picker
+              selectedValue={radius}
+              onValueChange={(itemValue) => setRadius(itemValue)}
+              style={[styles.picker, { color: colors.text, backgroundColor: 'transparent' }]}
+            >
+              <Picker.Item label="1 km" value="1" />
+              <Picker.Item label="3 km" value="3" />
+              <Picker.Item label="5 km" value="5" />
+              <Picker.Item label="10 km" value="10" />
+              <Picker.Item label="20 km" value="20" />
+              <Picker.Item label="50 km" value="50" />
+            </Picker>
+          </View>
+          {radius !== userPreferredRadius && (
+            <TouchableOpacity
+              style={[styles.resetButton, { backgroundColor: colors.primary }]}
+              onPress={() => setRadius(userPreferredRadius)}
+            >
+              <Text style={[styles.resetButtonText, { color: '#fff' }]}>Reset to Default ({userPreferredRadius} km)</Text>
             </TouchableOpacity>
           )}
-        />
-      )}
-
-      {/* Chats */}
-      {chatList.length > 0 ? (
-        <FlatList
-          data={chatList}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.chatBox} onPress={() => openChat(item.id)}>
-            <Image
-              source={item.profileImageUrl ? { uri: item.profileImageUrl } : require("../assets/images/placeholder.png")}
-              style={styles.chatImage}
-            />
-            
-            <View style={styles.chatContent}>
-              <View style={styles.chatTopRow}>
-                <Text style={styles.chatUsername} numberOfLines={1}>{item.username}</Text>
-                <Text style={styles.messageTime}>{formatMessageTime(item.timestamp)}</Text>
-              </View>
-          
-              <View style={styles.chatBottomRow}>
-                <Text style={styles.lastMessage} numberOfLines={1} ellipsizeMode="tail">{item.lastMessage}</Text>
-          
-                {item.unreadCount > 0 && (
-                  <View style={styles.unreadBubble}>
-                    <Text style={styles.unreadText}>{item.unreadCount > 99 ? "99+" : item.unreadCount}</Text>
-                  </View>
-                )}
-              </View>
-          
-              {item.isMessageFromUser && (
-                <Text style={[styles.seenStatus, item.lastMessageRead ? styles.seenText : styles.sentText]}>
-                  {item.lastMessageRead ? "Read" : "Sent"}
-                </Text>
-              )}
-            </View>
-          </TouchableOpacity>
-          
-          )}
-        />
-      ) : (
-        <View style={styles.emptyChatList}>
-          <Text style={styles.emptyChatText}>No chats yet</Text>
-          <Text style={styles.emptyChatSubtext}>Search for users to start chatting</Text>
         </View>
-      )}
+        {!userLocation && (
+          <View style={[styles.locationAlert, { backgroundColor: colors.warning + '1A' }]}> 
+            <MaterialIcons name="location-off" size={16} color={colors.warning} />
+            <Text style={[styles.locationAlertText, { color: colors.warning }]}>Location services are disabled. Enable location services to see posts within your selected radius.</Text>
+          </View>
+        )}
+        {showSearchResults && searchQuery.trim() !== '' && (
+          <View style={[styles.searchDropdown, { backgroundColor: colors.card }]}> 
+            {/* User Results */}
+            {filteredUsers.length > 0 && (
+              <View style={styles.dropdownSection}>
+                <Text style={[styles.dropdownSectionTitle, { color: colors.textSecondary }]}>Users</Text>
+                {filteredUsers.map(user => (
+                  <TouchableOpacity 
+                    key={user.id} 
+                    style={styles.dropdownItem} 
+                    onPress={() => handleUserClick(user.id)}
+                  >
+                    <Image 
+                      source={user.photoURL ? { uri: user.photoURL } : { uri: anonymousAvatar }} 
+                      style={styles.dropdownAvatar} 
+                    />
+                    <View style={styles.dropdownItemContent}>
+                      <Text style={[styles.dropdownText, { color: colors.text }]}>{user.displayName || 'Anonymous User'}</Text>
+                      {user.nickname && <Text style={[styles.dropdownSubText, { color: colors.textTertiary }]}>@{user.nickname}</Text>}
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {filteredPosts.length > 0 && (
+              <View style={styles.dropdownSection}>
+                <Text style={[styles.dropdownSectionTitle, { color: colors.textSecondary }]}>Posts</Text>
+                {filteredPosts.slice(0, 3).map(post => (
+                  <TouchableOpacity 
+                    key={post.id} 
+                    style={styles.dropdownItem} 
+                    onPress={() => {
+                      handleCardPress(post.id);
+                      setShowSearchResults(false);
+                    }}
+                  >
+                    <Image
+                      source={post.imageUrl ? { uri: post.imageUrl } : placeholderImage} 
+                      style={[styles.dropdownPostImage, { backgroundColor: colors.border }]} 
+                    />
+                    <View style={styles.dropdownItemContent}>
+                      <Text style={[styles.dropdownText, { color: colors.text }]}>{post.title}</Text>
+                      <Text style={[styles.dropdownSubText, { color: colors.textTertiary }]}>{post.caption?.substring(0, 50)}...</Text>
+                    </View>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            )}
+            {filteredUsers.length === 0 && filteredPosts.length === 0 && (
+              <View style={styles.noResults}>
+                <Text style={[styles.noResultsText, { color: colors.textTertiary }]}>No results found</Text>
+              </View>
+            )}
+          </View>
+        )}
+        <View style={styles.tagsContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {['Traffic', 'Events', 'Food', 'Safety', 'Community', 'Alerts', 'News'].map((tag) => (
+              <TouchableOpacity
+                key={tag}
+                style={[styles.tagChip, { backgroundColor: selectedTag === tag ? colors.primary : colors.card }]}
+                onPress={() => handleTagPress(tag)}
+              >
+                <Text style={[styles.tagChipText, { color: selectedTag === tag ? '#fff' : colors.textTertiary, fontWeight: selectedTag === tag ? 'bold' : 'normal' }]}>{tag}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+        <View style={styles.postsList}>
+          {filteredPosts.map(post => (
+            <TouchableOpacity
+              key={post.id}
+              style={[styles.postCard, { backgroundColor: colors.card }]}
+              onPress={() => handleCardPress(post.id)}
+            >
+              <View style={[styles.postHeader, { backgroundColor: colors.surface }]}> 
+                <TouchableOpacity 
+                  style={styles.userInfoContainer}
+                  onPress={() => {
+                    if (!post.isAnonymous && post.creatorId) {
+                      router.push(`/users/${post.creatorId}`);
+                    }
+                  }}
+                  disabled={post.isAnonymous || !post.creatorId}
+                >
+                  <Image 
+                    source={post.isAnonymous ? { uri: anonymousAvatar } : (post.userAvatar ? { uri: post.userAvatar } : { uri: anonymousAvatar })} 
+                    style={styles.postAvatar} 
+                  />
+                  <Text style={[styles.postUsername, { color: colors.text }]}>{post.isAnonymous ? 'Anonymous' : (post.username || 'Unknown User')}</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={[styles.postImageContainer, { backgroundColor: colors.border }]}> 
+                <Image 
+                  source={post.imageUrl ? { uri: post.imageUrl } : placeholderImage} 
+                  style={styles.postImage} 
+                  resizeMode="contain"
+                />
+              </View>
+              <View style={styles.postContent}>
+                <View style={styles.postTitleRow}>
+                  <Text style={[styles.postTitle, { color: colors.text }]} numberOfLines={1}>{post.title}</Text>
+                  <View style={styles.postTimeContainer}>
+                    <MaterialIcons name="access-time" size={12} color={colors.textTertiary} />
+                    <Text style={[styles.postTime, { color: colors.textTertiary }]}>{formatTimeRemaining(post.expiresAt)}</Text>
+                  </View>
+                </View>
+                <Text style={[styles.postCaption, { color: colors.textSecondary }]} numberOfLines={2}>{post.caption}</Text>
+                <View style={styles.postTags}>
+                  {post.tags?.slice(0, 3).map(tag => (
+                    <TouchableOpacity
+                      key={tag}
+                      style={[styles.postTag, { backgroundColor: selectedTag === tag ? colors.primary : colors.input }]}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleTagPress(tag);
+                      }}
+                    >
+                      <Text style={[styles.postTagText, { color: selectedTag === tag ? '#fff' : colors.primary, fontWeight: selectedTag === tag ? 'bold' : 'normal' }]}>{tag}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+              <View style={[styles.postActions, { borderTopColor: colors.border }]}> 
+                <View style={styles.postAction}>
+                  <MaterialIcons 
+                    name={post.likedBy?.includes(auth.currentUser?.uid) ? "favorite" : "favorite-border"} 
+                    size={16} 
+                    color={post.likedBy?.includes(auth.currentUser?.uid) ? colors.error : colors.textTertiary} 
+                  />
+                  <Text style={[styles.postActionText, { color: colors.textTertiary }]}>{post.likes || 0}</Text>
+                </View>
+                <View style={styles.postAction}>
+                  <MaterialIcons name="chat-bubble-outline" size={16} color={colors.textTertiary} />
+                  <Text style={[styles.postActionText, { color: colors.textTertiary }]}>{post.commentCount || 0}</Text>
+                </View>
+                <View style={styles.postAction}>
+                  <MaterialIcons name="visibility" size={16} color={colors.textTertiary} />
+                  <Text style={[styles.postActionText, { color: colors.textTertiary }]}>{post.eyewitnesses || 0}</Text>
+                </View>
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+        <View style={styles.bottomPadding} />
+      </ScrollView>
+      <FooterNav />
+      <TouchableOpacity
+        style={styles.fab}
+        onPress={() => router.push('/aichat')}
+        activeOpacity={0.8}
+      >
+         <Image source={aiStar} style={{ width: 50, height: 50, resizeMode: 'contain', tintColor: 'white' }} />
+      </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#E3F2FD" },
-  header: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", padding: 15, backgroundColor: "#1E88E5" },
-  headerTitle: { fontSize: 22, fontWeight: "bold", color: "white" },
-  profileImage: { width: 45, height: 45, borderRadius: 22.5 },
-  searchBar: { height: 40, margin: 10, borderWidth: 1, borderColor: "#ccc", borderRadius: 10, paddingLeft: 10, backgroundColor: "#fff" },
-  suggestionItem: { flexDirection: "row", padding: 10, alignItems: "center", borderBottomWidth: 1, borderBottomColor: "#ddd", backgroundColor: "#fff" },
-  suggestionImage: { width: 40, height: 40, borderRadius: 20, marginRight: 10 },
-  suggestionText: { fontSize: 16 },
-  chatBox: { flexDirection: "row", padding: 15, borderBottomWidth: 1, borderBottomColor: "#ddd", backgroundColor: "#fff", alignItems: "center" },
-  chatImage: { width: 45, height: 45, borderRadius: 22.5, marginRight: 15 },
-  chatInfo: { flex: 1 },
-  chatUsername: { fontSize: 16, fontWeight: "bold" },
-  seenStatus: { 
-    fontSize: 12, 
-    marginTop: 2
+  centered: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#121212' },
+  error: { color: '#e74c3c', fontSize: 16 },
+  searchContainer: {
+    marginBottom: 12,
   },
-  seenText: {
-    color: "#64B5F6"  // Blue color for "Read"
+  searchInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#232323',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
   },
-  sentText: {
-    color: "#9E9E9E"  // Gray color for "Sent"
+  searchIcon: {
+    marginRight: 8,
   },
-  emptyChatList: { flex: 1, justifyContent: "center", alignItems: "center" },
-  emptyChatText: { fontSize: 18, fontWeight: "bold", color: "#888" },
-  emptyChatSubtext: { fontSize: 14, color: "#888", marginTop: 10 },
-  dropdownMenu: { 
-    position: "absolute", 
-    right: 20, 
-    top: 75, 
-    backgroundColor: "#FFF", 
-    borderRadius: 8, 
+  searchInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 16,
+  },
+  radiusContainer: {
+    marginBottom: 12,
+  },
+  radiusLabel: {
+    color: '#aaa',
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  radiusDropdown: {
+    backgroundColor: '#232323',
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  picker: {
+    width: '100%',
+    color: '#fff',
+    fontSize: 16,
+    backgroundColor: 'transparent',
+  },
+  resetButton: {
+    backgroundColor: '#4A6FFF',
+    borderRadius: 12,
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    alignSelf: 'flex-start',
+    marginTop: 8,
+  },
+  resetButtonText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  locationAlert: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFA7261A',
+    borderRadius: 12,
     paddingVertical: 10, 
-    paddingHorizontal: 15, 
-    elevation: 5, 
-    zIndex: 999,
-    shadowColor: "#000", 
-    shadowOffset: { width: 0, height: 3 }, 
-    shadowOpacity: 0.2, 
-    shadowRadius: 5 
+    paddingHorizontal: 12,
+    marginBottom: 12,
+  },
+  locationAlertText: {
+    color: '#FFA726',
+    fontSize: 14,
+    marginLeft: 8,
+  },
+  searchDropdown: {
+    backgroundColor: '#232323',
+    borderRadius: 12,
+    padding: 10,
+    marginBottom: 12,
+    position: 'absolute',
+    top: 60,
+    left: 0,
+    right: 0,
+    zIndex: 100,
+    maxHeight: 300,
+  },
+  dropdownSection: { 
+    padding: 12,
+  },
+  dropdownSectionTitle: {
+    color: '#aaa',
+    fontSize: 14,
+    fontWeight: 'bold',
+    marginBottom: 8,
   },
   dropdownItem: { 
-    paddingVertical: 12, 
-    paddingHorizontal: 18, 
+    flexDirection: 'row', 
+    alignItems: 'center', 
+    paddingVertical: 8,
+    paddingHorizontal: 12,
     borderBottomWidth: 1, 
-    borderBottomColor: "#E0E0E0" 
+    borderBottomColor: '#333',
   },
-  modalContainer: { 
+  dropdownAvatar: { 
+    width: 32, 
+    height: 32, 
+    borderRadius: 16, 
+    marginRight: 12 
+  },
+  dropdownPostImage: { 
+    width: 40, 
+    height: 40, 
+    borderRadius: 8, 
+    marginRight: 12,
+    backgroundColor: '#333',
+  },
+  dropdownItemContent: {
     flex: 1, 
-    justifyContent: "center", 
-    alignItems: "center", 
-    backgroundColor: "rgba(0,0,0,0.6)" // Dark overlay for focus
   },
-  input: { 
-    height: 45, 
-    borderColor: "#90CAF9", 
-    borderWidth: 1, 
-    marginBottom: 20, 
-    paddingHorizontal: 10, 
-    width: "80%", 
-    backgroundColor: "#fff", 
-    borderRadius: 5 
+  dropdownText: { 
+    color: '#fff', 
+    fontSize: 15 
   },
-  submitButton: { 
-    backgroundColor: "#64B5F6", 
-    paddingVertical: 12, 
-    paddingHorizontal: 30, 
-    borderRadius: 5 
+  dropdownSubText: { 
+    color: '#aaa', 
+    fontSize: 13, 
+    marginTop: 2 
   },
-  removeButton: { 
-    backgroundColor: "#FF8A65", 
-    paddingVertical: 12, 
-    paddingHorizontal: 30, 
-    borderRadius: 5, 
-    marginTop: 10 
+  noResults: {
+    paddingVertical: 20,
+    alignItems: 'center',
   },
-  closeButton: { 
-    backgroundColor: "#B0BEC5", 
-    paddingVertical: 12, 
-    paddingHorizontal: 30, 
-    borderRadius: 5, 
-    marginTop: 10 
+  noResultsText: {
+    color: '#aaa',
+    fontSize: 16,
   },
-  buttonText: { 
-    color: "white", 
-    fontWeight: "bold" 
+  tagsContainer: {
+    marginBottom: 12,
   },
-  rightInfo: {
-    alignItems: "flex-end",
-    justifyContent: "space-between",
-    marginLeft: 10,
+  tagChip: {
+    backgroundColor: '#232323',
+    borderRadius: 20,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    marginRight: 8,
   },
-  
-  messageRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginTop: 4,
+  tagChipActive: {
+    backgroundColor: '#4A6FFF',
   },
-  
-  chatContent: {
-    flex: 1,
-    justifyContent: "center"
-  },
-  chatTopRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 4
-  },
-  chatBottomRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center"
-  },
-  messageTime: {
-    fontSize: 12,
-    color: "#888",
-    marginLeft: 10
-  },
-  unreadBubble: {
-    backgroundColor: "#1E88E5",
-    borderRadius: 12,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    alignSelf: "flex-start",
-    marginLeft: 8,
-    minWidth: 24,
-    alignItems: "center"
-  },
-  unreadText: {
-    color: "white",
-    fontSize: 12,
-    fontWeight: "bold"
-  },
-  lastMessage: {
+  tagChipText: {
+    color: '#ccc',
     fontSize: 14,
-    color: "#555",
-    flex: 1
-  }
+  },
+  tagChipTextActive: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  postsList: {
+    marginTop: 12,
+  },
+  postCard: {
+    width: '100%', // Full width
+    backgroundColor: '#181818',
+    borderRadius: 16,
+    marginBottom: 16,
+    overflow: 'hidden',
+    shadowColor: '#000',
+    shadowOpacity: 0.15,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  postHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    backgroundColor: '#232323',
+  },
+  userInfoContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  postAvatar: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    marginRight: 10,
+  },
+  postUsername: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 15,
+  },
+  postImageContainer: {
+    width: '100%',
+    height: SCREEN_WIDTH * 0.6, // Full width image container
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  postImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'contain', // This will add black bars on sides if needed
+  },
+  postContent: {
+    padding: 12,
+  },
+  postTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  postTitle: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 16,
+    flex: 1,
+  },
+  postTimeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  postTime: {
+    color: '#666',
+    fontSize: 12,
+    marginLeft: 4,
+  },
+  postCaption: {
+    color: '#ccc',
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  postTags: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+  postTag: {
+    backgroundColor: '#232323',
+    borderRadius: 12,
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    marginRight: 6,
+    marginBottom: 4,
+  },
+  postTagActive: {
+    backgroundColor: '#4A6FFF',
+  },
+  postTagText: {
+    color: '#4A6FFF',
+    fontSize: 12,
+  },
+  postTagTextActive: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
+  postActions: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    paddingTop: 8,
+    paddingHorizontal: 12,
+    paddingBottom: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#333',
+  },
+  postAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  postActionText: {
+    color: '#666',
+    fontSize: 13,
+    marginLeft: 4,
+  },
+  bottomPadding: {
+    height: 100, // Adjust height as needed
+  },
+  fab: {
+    position: 'absolute',
+    bottom: 80,
+    right: 20,
+    backgroundColor: '#4A6FFF',
+    width: 70,
+    height: 70,
+    borderRadius: 35,
+    alignItems: 'center',
+    justifyContent: 'center',
+    elevation: 6,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+    zIndex: 100,
+  },
 });

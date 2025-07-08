@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1074543819763",
+    "project_id": "local-web-b4765",
+    "storage_bucket": "local-web-b4765.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1074543819763:android:d253fc759f2d3093fef086",
+        "android_client_info": {
+          "package_name": "com.localpulse.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCdryHlAFnGTg9gLUf8ZvpB3FIRR-R-b6o"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
