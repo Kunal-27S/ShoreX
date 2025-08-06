@@ -234,6 +234,15 @@ export default function ChatsPage() {
         const chatsData = await Promise.all(snapshot.docs.map(async (chatDocSnap) => {
           const chat = { id: chatDocSnap.id, ...chatDocSnap.data() };
 
+          // Check if the chat has any messages
+          const messagesRef = collection(firestore, 'users', auth.currentUser.uid, 'chats', chat.id, 'messages');
+          const messagesSnapshot = await getDocs(messagesRef);
+          
+          // Skip this chat if it has no messages
+          if (messagesSnapshot.empty) {
+            return null;
+          }
+
           let otherUser = { name: 'Unknown User', avatar: '' };
           if (chat.otherUserId) {
             try {
@@ -242,7 +251,7 @@ export default function ChatsPage() {
               if (userDocSnap.exists()) {
                 const userData = userDocSnap.data();
                 otherUser = {
-                  name: userData.displayName || userData.email || 'Unknown User',
+                  name: userData.displayName || 'Anonymous User',
                   avatar: userData.photoURL || '',
                 };
               }
@@ -257,7 +266,9 @@ export default function ChatsPage() {
           };
         }));
 
-        setChats(chatsData);
+        // Filter out null values (chats with no messages) and set the remaining chats
+        const filteredChatsData = chatsData.filter(chat => chat !== null);
+        setChats(filteredChatsData);
         setLoadingChats(false);
       },
       err => {

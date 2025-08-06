@@ -1,37 +1,34 @@
-import { Stack, useRouter, Slot } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { auth, firestore } from '../firebaseConfig';
-import { collection, query, where, onSnapshot, doc, addDoc, Timestamp, getDoc } from 'firebase/firestore';
+import React, { useEffect } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Stack, useRouter } from 'expo-router';
 import { ThemeProvider } from '../contexts/ThemeContext';
+import { BackHandler } from 'react-native';
 
 export default function RootLayout() {
   const router = useRouter();
-  const [checking, setChecking] = useState(true);
-  const [onboarded, setOnboarded] = useState(true);
 
   useEffect(() => {
-    const checkOnboarding = async () => {
-      if (auth.currentUser) {
-        const userDoc = await getDoc(doc(firestore, 'users', auth.currentUser.uid));
-        if (userDoc.exists()) {
-          setOnboarded(userDoc.data().onboarded === true);
-          if (!userDoc.data().onboarded) {
-            router.replace('/onboarding/step1');
-          }
-        } else {
-          setOnboarded(false);
-          router.replace('/onboarding/step1');
-        }
+    const onBackPress = () => {
+      // Prevent back navigation on sign-in page
+      const currentPath = router.asPath || router.pathname || '';
+      if (currentPath.includes('/signin') || currentPath === '/signin') {
+        return false; // Let OS handle (exit app)
       }
-      setChecking(false);
+      if (router.canGoBack?.()) {
+        router.back();
+        return true;
+      }
+      return false; // Let the OS handle it (exit app)
     };
-    checkOnboarding();
-  }, [auth.currentUser]);
+    BackHandler.addEventListener('hardwareBackPress', onBackPress);
+    return () => BackHandler.removeEventListener('hardwareBackPress', onBackPress);
+  }, [router]);
 
-  if (checking) return null;
   return (
-    <ThemeProvider>
-      <Slot />
-    </ThemeProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <ThemeProvider>
+        <Stack screenOptions={{ headerShown: false }} />
+      </ThemeProvider>
+    </GestureHandlerRootView>
   );
 } 

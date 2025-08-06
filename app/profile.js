@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, ActivityIndicator, Image, TouchableOpacity, FlatList, Dimensions, ScrollView, Modal, TextInput } from 'react-native';
+import { View, Text, StyleSheet, ActivityIndicator, Image, TouchableOpacity, FlatList, Dimensions, ScrollView, Modal, TextInput, Animated, Easing } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { firestore, auth } from '../firebaseConfig';
-import { collection, query, where, orderBy, getDocs, doc, getDoc, Timestamp, updateDoc } from 'firebase/firestore';
-import { getStorage, ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { collection, query, where, orderBy, getDocs, doc, getDoc, Timestamp, updateDoc, writeBatch } from 'firebase/firestore';
+import { getStorage, ref, deleteObject, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { router } from 'expo-router';
 import FooterNav from '../components/FooterNav';
 import HeaderBar from '../components/HeaderBar';
@@ -26,6 +26,53 @@ export default function Profile() {
   const [editBio, setEditBio] = useState('');
   const [editPhoto, setEditPhoto] = useState(null); // local uri
   const [saving, setSaving] = useState(false);
+  const [clockAnim] = useState(new Animated.Value(0));
+
+  // Helper function to delete post and all its associated data
+  const deletePostCompletely = async (post) => {
+    try {
+      const batch = writeBatch(firestore);
+
+      // Delete image from storage if it exists
+      if (post.imageUrl) {
+        try {
+          const imageUrl = new URL(post.imageUrl);
+          const imagePath = decodeURIComponent(imageUrl.pathname.split('/o/')[1]);
+          if (imagePath) {
+            const imageRef = ref(storage, imagePath);
+            await deleteObject(imageRef);
+          }
+        } catch (error) {
+          console.error('Error deleting post image:', error);
+        }
+      }
+
+      // Delete all comments
+      const commentsSnapshot = await getDocs(
+        collection(firestore, 'posts', post.id, 'comments')
+      );
+      commentsSnapshot.docs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+
+      // Delete all likes
+      const likesSnapshot = await getDocs(
+        collection(firestore, 'posts', post.id, 'likes')
+      );
+      likesSnapshot.docs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+
+      // Delete the post document itself
+      batch.delete(doc(firestore, 'posts', post.id));
+
+      // Execute all deletions
+      await batch.commit();
+      console.log('Post completely deleted:', post.id);
+    } catch (error) {
+      console.error('Error deleting post:', error);
+    }
+  };
 
   useEffect(() => {
     (async () => {
@@ -41,11 +88,32 @@ export default function Profile() {
         setEditNickname(profileData?.nickname || '');
         setEditBio(profileData?.bio || '');
         setEditPhoto(null); // reset photo picker
+
         // Fetch posts
         const postsCollectionRef = collection(firestore, 'posts');
         const userPostsQuery = query(postsCollectionRef, where('creatorId', '==', user.uid), orderBy('createdAt', 'desc'));
         const querySnapshot = await getDocs(userPostsQuery);
-        setUserPosts(querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        
+        const posts = [];
+        const now = new Date();
+
+        // Process each post
+        for (const doc of querySnapshot.docs) {
+          const post = { id: doc.id, ...doc.data() };
+          const createdAt = post.createdAt?.toDate();
+          const totalLifespan = 7 * 24 * 60 * 60 * 1000; // 1 week in milliseconds
+          
+          // Check if post has exceeded its total lifespan (2X hours)
+          if (createdAt && (now - createdAt) >= totalLifespan) {
+            // Delete the post if it's past its total lifespan
+            await deletePostCompletely(post);
+          } else {
+            // Keep the post if it's still within its lifespan
+            posts.push(post);
+          }
+        }
+
+        setUserPosts(posts);
       } catch (err) {
         setError('Failed to load profile.');
       } finally {
@@ -53,6 +121,30 @@ export default function Profile() {
       }
     })();
   }, []);
+
+  useEffect(() => {
+    Animated.loop(
+      Animated.timing(clockAnim, {
+        toValue: 1,
+        duration: 2000,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    ).start();
+  }, [clockAnim]);
+
+  // Helper to format time left for active posts
+  function formatTimeLeft(expiresAt) {
+    if (!expiresAt) return '';
+    const now = new Date();
+    const expirationDate = expiresAt instanceof Timestamp ? expiresAt.toDate() : new Date(expiresAt);
+    const diffMs = expirationDate - now;
+    if (diffMs <= 0) return 'Expired';
+    const diffMin = Math.floor(diffMs / 60000);
+    if (diffMin < 60) return `${diffMin} min left`;
+    const diffHr = Math.ceil(diffMin / 60);
+    return `${diffHr} hr${diffHr > 1 ? 's' : ''} left`;
+  }
 
   const isPostActive = (post) => {
     const now = Timestamp.now().toMillis();
@@ -76,9 +168,17 @@ export default function Profile() {
   const activePosts = userPosts.filter(post => isPostActive(post)).length;
   const expiredPosts = userPosts.filter(post => shouldDisplayExpiredPost(post)).length;
 
+  // Only show stats for posts that are currently visible (active or expired)
+  const visiblePosts = userPosts.filter(post => isPostActive(post) || shouldDisplayExpiredPost(post));
+
   const filteredPosts = userPosts.filter(post =>
     tab === 0 ? isPostActive(post) : shouldDisplayExpiredPost(post)
   );
+
+  // Stats for visible posts only
+  const numPosts = visiblePosts.length;
+  const numLikes = visiblePosts.reduce((sum, p) => sum + (p.likes || 0), 0);
+  const numWitnesses = visiblePosts.reduce((sum, p) => sum + (p.eyewitnesses || 0), 0);
 
   if (loading) {
     return <View style={[styles.centered, { backgroundColor: colors.background }]}><ActivityIndicator size="large" color={colors.primary} /></View>;
@@ -102,6 +202,15 @@ export default function Profile() {
             />
             <View style={styles.cardContent}>
               <Text style={[styles.cardTitle, { color: colors.text }]}>{item.title}</Text>
+              {/* Animated blue clock and time left for active posts */}
+              {isPostActive(item) && (
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                  <Animated.View style={{ transform: [{ rotate: clockAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] }) }] }}>
+                    <Icon name="clock-outline" size={18} color="#4A6FFF" />
+                  </Animated.View>
+                  <Text style={{ color: '#4A6FFF', marginLeft: 6, fontWeight: 'bold', fontSize: 14 }}>{formatTimeLeft(item.expiresAt)}</Text>
+                </View>
+              )}
               <View style={styles.cardTagsRow}>
                 {item.tags?.map(tag => (
                   <View key={tag} style={[styles.cardTag, { backgroundColor: colors.input }]}>
@@ -136,9 +245,9 @@ export default function Profile() {
               <Text style={[styles.bio, { color: colors.textSecondary }]}>{userProfile?.bio || 'No bio yet'}</Text>
             </View>
             <View style={styles.statsRow}>
-              <View style={styles.statBox}><Text style={[styles.statValue, { color: colors.text }]}>{userPosts.length}</Text><Text style={[styles.statLabel, { color: colors.textTertiary }]}>Posts</Text></View>
-              <View style={styles.statBox}><Text style={[styles.statValue, { color: colors.text }]}>{userPosts.reduce((sum, p) => sum + (p.likes || 0), 0)}</Text><Text style={[styles.statLabel, { color: colors.textTertiary }]}>Likes</Text></View>
-              <View style={styles.statBox}><Text style={[styles.statValue, { color: colors.text }]}>{userPosts.reduce((sum, p) => sum + (p.eyewitnesses || 0), 0)}</Text><Text style={[styles.statLabel, { color: colors.textTertiary }]}>Witnesses</Text></View>
+              <View style={styles.statBox}><Text style={[styles.statValue, { color: colors.text }]}>{numPosts}</Text><Text style={[styles.statLabel, { color: colors.textTertiary }]}>Posts</Text></View>
+              <View style={styles.statBox}><Text style={[styles.statValue, { color: colors.text }]}>{numLikes}</Text><Text style={[styles.statLabel, { color: colors.textTertiary }]}>Likes</Text></View>
+              <View style={styles.statBox}><Text style={[styles.statValue, { color: colors.text }]}>{numWitnesses}</Text><Text style={[styles.statLabel, { color: colors.textTertiary }]}>Witnesses</Text></View>
             </View>
             <View style={styles.statsRow}>
               <View style={styles.statBox}><Text style={[styles.statValue, { color: colors.text }]}>{activePosts}</Text><Text style={[styles.statLabel, { color: colors.textTertiary }]}>Active Posts</Text></View>

@@ -37,16 +37,13 @@ export const ThemeProvider = ({ children }) => {
         if (userDoc.exists()) {
           const userData = userDoc.data();
           const themeValue = userData.settings?.theme;
-          console.log('Theme value from Firestore:', themeValue, 'Top-level theme:', userData.theme);
           
           if (themeValue === 'dark' || themeValue === 'light') {
             setDarkMode(themeValue === 'dark');
-            console.log('Set darkMode to', themeValue === 'dark');
           } else {
             // Set default theme for existing users who don't have a valid string preference
             await setDoc(userDocRef, { settings: { theme: 'dark' } }, { merge: true });
             setDarkMode(true);
-            console.log('Fallback: set darkMode to true');
           }
         } else {
           // Create user document with default dark theme

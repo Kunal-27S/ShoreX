@@ -42,6 +42,20 @@ function normalizeTag(tag) {
   return t;
 }
 
+// Add a helper to format how long ago a post was created
+function formatTimeAgo(createdAt) {
+  if (!createdAt) return '';
+  const now = new Date();
+  const created = createdAt instanceof Timestamp ? createdAt.toDate() : new Date(createdAt);
+  const diffMs = now - created;
+  const diffSec = Math.floor(diffMs / 1000);
+  if (diffSec < 60) return `${diffSec} seconds ago`;
+  const diffMin = Math.floor(diffSec / 60);
+  if (diffMin < 60) return `${diffMin} minutes ago`;
+  const diffHr = Math.floor(diffMin / 60);
+  return `${diffHr} hours ago`;
+}
+
 export default function Home() {
   const { colors } = useTheme();
   const [searchQuery, setSearchQuery] = useState('');
@@ -406,7 +420,7 @@ export default function Home() {
                   <Text style={[styles.postTitle, { color: colors.text }]} numberOfLines={1}>{post.title}</Text>
                   <View style={styles.postTimeContainer}>
                     <MaterialIcons name="access-time" size={12} color={colors.textTertiary} />
-                    <Text style={[styles.postTime, { color: colors.textTertiary }]}>{formatTimeRemaining(post.expiresAt)}</Text>
+                    <Text style={[styles.postTime, { color: colors.textTertiary }]}>{formatTimeAgo(post.createdAt)}</Text>
                   </View>
                 </View>
                 <Text style={[styles.postCaption, { color: colors.textSecondary }]} numberOfLines={2}>{post.caption}</Text>

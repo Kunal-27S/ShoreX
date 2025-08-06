@@ -39,10 +39,8 @@ export default function Settings() {
         const userDoc = await getDoc(userDocRef);
         if (userDoc.exists()) {
           const userData = userDoc.data();
-          console.log('Fetched user data:', userData);
           
           if (userData.settings) {
-            console.log('Current settings:', userData.settings);
             setSettings(userData.settings);
           }
           
@@ -223,7 +221,7 @@ export default function Settings() {
                 onPress={pickAvatar}
                 disabled={uploadingAvatar || saving}
               >
-                <Text style={[styles.buttonText, { color: styles.button.backgroundColor === colors.primary ? '#fff' : colors.text }]}>Change Picture</Text>
+                <Text style={[styles.buttonText, { color: '#fff' }]}>Change Picture</Text>
               </TouchableOpacity>
               
               {avatarFile && (
@@ -318,7 +316,7 @@ export default function Settings() {
             onPress={handleDeleteAccount}
             disabled={saving}
           >
-            <Text style={[styles.dangerButtonText, { color: styles.button.backgroundColor === colors.error ? '#fff' : colors.text }]}>Delete Account</Text>
+            <Text style={[styles.dangerButtonText, { color: '#fff' }]}>Delete Account</Text>
           </TouchableOpacity>
         </View>
 

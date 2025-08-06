@@ -170,7 +170,7 @@ export default function MapViewScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <HeaderBar />
-      <View style={[styles.filterPanel, { backgroundColor: colors.card, borderBottomColor: colors.border }]}> 
+      <View style={[styles.filterPanel, { backgroundColor: colors.card, borderBottomColor: colors.border, flexShrink: 0 }]}> 
         <Text style={[styles.filterLabel, { color: colors.text }]}>Filter by Tags:</Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.tagsRow}>
           {['Traffic', 'Events', 'Food', 'Safety', 'Community', 'Alerts', 'News'].map(tag => (
@@ -201,33 +201,36 @@ export default function MapViewScreen() {
         <Text style={[styles.postsCount, { color: colors.text }]}>Showing {filteredPosts.length} posts</Text>
       </View>
       
-      <MapView
-        style={styles.map}
-        initialRegion={{
-          latitude: mapCenter.latitude,
-          longitude: mapCenter.longitude,
-          latitudeDelta: userPosition ? 0.05 : 0.1,
-          longitudeDelta: userPosition ? 0.05 : 0.1,
-        }}
-        showsUserLocation={!!userPosition}
-        showsMyLocationButton={true}
-        showsCompass={true}
-        showsScale={true}
-      >
-        {filteredPosts.map(post => (
-          <Marker
-            key={post.id}
-            coordinate={{ 
-              latitude: post.location.latitude, 
-              longitude: post.location.longitude 
-            }}
-            onPress={() => handleMarkerPress(post)}
-            pinColor={colors.primary}
-          >
-            <MaterialIcons name="location-on" size={32} color={colors.primary} />
-          </Marker>
-        ))}
-      </MapView>
+      <View style={{ flex: 1 }}>
+        <MapView
+          provider="google"
+          style={{ flex: 1 }}
+          initialRegion={{
+            latitude: mapCenter.latitude,
+            longitude: mapCenter.longitude,
+            latitudeDelta: userPosition ? 0.05 : 0.1,
+            longitudeDelta: userPosition ? 0.05 : 0.1,
+          }}
+          showsUserLocation={!!userPosition}
+          showsMyLocationButton={true}
+          showsCompass={true}
+          showsScale={true}
+        >
+          {filteredPosts.map(post => (
+            <Marker
+              key={post.id}
+              coordinate={{ 
+                latitude: post.location.latitude, 
+                longitude: post.location.longitude 
+              }}
+              onPress={() => handleMarkerPress(post)}
+              pinColor={colors.primary}
+            >
+              <MaterialIcons name="location-on" size={32} color={colors.primary} />
+            </Marker>
+          ))}
+        </MapView>
+      </View>
       
       {selectedPost && (
         <Modal
@@ -298,7 +301,7 @@ const styles = StyleSheet.create({
   tagChipSelected: { backgroundColor: '#4A6FFF' },
   tagText: { color: '#ccc', fontSize: 14 },
   tagTextSelected: { color: '#fff', fontWeight: 'bold' },
-  map: { flex: 1, width: '100%', height: SCREEN_HEIGHT * 0.6 },
+  map: { flex: 1 },
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',

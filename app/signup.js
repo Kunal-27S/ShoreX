@@ -7,11 +7,11 @@ import { doc, setDoc, collection, query, where, getDocs } from "firebase/firesto
 import { MaterialIcons } from '@expo/vector-icons';
 
 const marqueeImages = [
-  require('../assets/images/marquee/image1.png'),
-  require('../assets/images/marquee/image2.png'),
-  require('../assets/images/marquee/image3.png'),
-  require('../assets/images/marquee/image4.png'),
-  require('../assets/images/marquee/image5.png'),
+  require('../assets/images/marquee/image1_converted.png'),
+  require('../assets/images/marquee/image2_converted.png'),
+  require('../assets/images/marquee/image3_converted.png'),
+  require('../assets/images/marquee/image4_converted.png'),
+  require('../assets/images/marquee/image5_converted.png'),
   require('../assets/images/marquee/image6.png'),
 ];
 
@@ -79,6 +79,7 @@ export default function SignUp() {
 
   // Function to check if username is available
   const checkUsernameAvailability = async (username) => {
+    username = username.trim();
     if (!username || username.length < 3) return false;
     setCheckingUsername(true);
     try {
@@ -127,7 +128,8 @@ export default function SignUp() {
     if (!validateForm()) return;
     setLoading(true);
     try {
-      const isUsernameAvailable = await checkUsernameAvailability(username);
+      const trimmedUsername = username.trim();
+      const isUsernameAvailable = await checkUsernameAvailability(trimmedUsername);
       if (!isUsernameAvailable) {
         setErrors({ username: 'Username already exists. Please choose a different one.' });
         setLoading(false);
@@ -135,12 +137,12 @@ export default function SignUp() {
       }
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
-      await updateProfile(user, { displayName: username });
+      await updateProfile(user, { displayName: trimmedUsername });
       await sendEmailVerification(user);
-        await setDoc(doc(firestore, "users", user.uid), {
-          uid: user.uid,
+      await setDoc(doc(firestore, "users", user.uid), {
+        uid: user.uid,
         email: user.email,
-        displayName: username,
+        displayName: trimmedUsername,
         createdAt: new Date(),
         emailVerified: false,
         settings: {

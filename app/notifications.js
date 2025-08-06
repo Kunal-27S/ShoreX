@@ -36,6 +36,10 @@ const getNotificationIcon = (type) => {
       return { name: 'cancel', color: '#FF3B30' };
     case 'tag_match':
       return { name: 'local-offer', color: '#34C759' };
+    case 'mention':
+      return { name: 'alternate-email', color: '#4A6FFF' };
+    case 'tagged_in_post':
+      return { name: 'person-add', color: '#4A6FFF' };
     default:
       return { name: 'notifications', color: '#666' };
   }
@@ -68,6 +72,10 @@ const getNotificationText = (notification) => {
       return notification.message || 'Your post was rejected due to content violations.';
     case 'tag_match':
       return `${userName} created a post with your subscribed tags (${notification.matchedTags?.join(', ')}) within ${notification.distance}km`;
+    case 'mention':
+      return notification.message || `${userName} tagged you in a comment or reply.`;
+    case 'tagged_in_post':
+      return notification.message || `${userName} tagged you in a post.`;
     default:
       return `${userName} interacted with your post`;
   }
@@ -155,6 +163,7 @@ function getStyles(colors) {
     },
     notificationsContent: {
       padding: 16,
+      paddingBottom: 60, // Add extra space at the bottom
     },
     notificationItem: {
       backgroundColor: colors.card,
@@ -229,7 +238,6 @@ export default function Notifications() {
       return;
     }
 
-    console.log('Starting notifications setup for user:', auth.currentUser.uid);
     setError(null);
 
     const setupNotifications = async () => {
@@ -238,13 +246,7 @@ export default function Notifications() {
         const userDocRef = doc(firestore, 'users', auth.currentUser.uid);
         const userDoc = await getDoc(userDocRef);
 
-        console.log('User document check:', {
-          exists: userDoc.exists(),
-          userId: auth.currentUser.uid
-        });
-
         if (!userDoc.exists()) {
-          console.log('Creating user document for:', auth.currentUser.uid);
           await setDoc(userDocRef, {
             email: auth.currentUser.email,
             displayName: auth.currentUser.displayName || 'Anonymous User',
@@ -261,20 +263,10 @@ export default function Notifications() {
           orderBy('timestamp', 'desc')
         );
 
-        console.log('Setting up notifications listener for path:', `users/${auth.currentUser.uid}/notifications`);
-
         const unsubscribe = onSnapshot(
           notificationsQuery,
           async (snapshot) => {
             try {
-              console.log('Received notifications snapshot:', {
-                count: snapshot.docs.length,
-                docs: snapshot.docs.map(doc => ({
-                  id: doc.id,
-                  type: doc.data().type,
-                  timestamp: doc.data().timestamp?.toDate()
-                }))
-              });
               
               const notificationsData = snapshot.docs.map(doc => ({
                 id: doc.id,
@@ -289,7 +281,6 @@ export default function Notifications() {
                 notificationCount: unreadCount
               });
 
-              console.log('Processed notifications:', notificationsData);
               setNotifications(notificationsData);
               setLoading(false);
               setError(null);
@@ -338,7 +329,6 @@ export default function Notifications() {
 
     return () => {
       if (unsubscribe) {
-        console.log('Cleaning up notifications listener');
         unsubscribe();
       }
     };
@@ -363,7 +353,6 @@ export default function Notifications() {
 
         // Delete the notification
         await deleteDoc(notificationRef);
-        console.log('Automatically deleted notification:', notification.id);
         
         // Then navigate to the post
         router.push(`/posts/${notification.postId}`);
@@ -385,7 +374,6 @@ export default function Notifications() {
       );
 
       await deleteDoc(notificationRef);
-      console.log('Deleted notification:', notificationId);
     } catch (err) {
       console.error('Error deleting notification:', err);
       Alert.alert('Error', 'Failed to delete notification');
@@ -419,7 +407,6 @@ export default function Notifications() {
 
               // Commit the batch
               await batch.commit();
-              console.log('Deleted all notifications');
             } catch (err) {
               console.error('Error deleting all notifications:', err);
               Alert.alert('Error', 'Failed to delete all notifications. Please try again.');

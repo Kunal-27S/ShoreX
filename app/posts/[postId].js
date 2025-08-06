@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert, Image, Dimensions, KeyboardAvoidingView, Platform } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert, Image, Dimensions, KeyboardAvoidingView, Platform, FlatList, Modal } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { auth, firestore } from '../../firebaseConfig';
-import { collection, doc, getDoc, query, orderBy, onSnapshot, addDoc, updateDoc, arrayUnion, arrayRemove, Timestamp, deleteDoc, setDoc } from 'firebase/firestore';
+import { collection, doc, getDoc, query, orderBy, onSnapshot, addDoc, updateDoc, arrayUnion, arrayRemove, Timestamp, deleteDoc, setDoc, getDocs } from 'firebase/firestore';
 import { MaterialIcons } from '@expo/vector-icons';
 import HeaderBar from '../../components/HeaderBar';
 import FooterNav from '../../components/FooterNav';
@@ -39,7 +39,6 @@ const createNotification = async (currentUser, recipientId, type, post, addition
     // Ensure recipient's user document exists
     const recipientDocRef = doc(firestore, 'users', recipientId);
     const recipientDoc = await getDoc(recipientDocRef);
-    
     if (!recipientDoc.exists()) {
       await setDoc(recipientDocRef, {
         email: post.creatorEmail || '',
@@ -54,11 +53,25 @@ const createNotification = async (currentUser, recipientId, type, post, addition
       });
     }
 
+    // Always fetch sender's Firestore profile for displayName
+    let senderDisplayName = 'Anonymous User';
+    let senderPhotoURL = '';
+    const senderDocRef = doc(firestore, 'users', currentUser.uid);
+    const senderDoc = await getDoc(senderDocRef);
+    if (senderDoc.exists()) {
+      const senderData = senderDoc.data();
+      senderDisplayName = senderData.displayName || 'Anonymous User';
+      senderPhotoURL = senderData.photoURL || currentUser.photoURL || '';
+    } else {
+      senderDisplayName = currentUser.displayName || currentUser.email || currentUser.uid || 'Anonymous User';
+      senderPhotoURL = currentUser.photoURL || '';
+    }
+
     // Create notification data
     const notificationData = {
       triggeringUserId: currentUser.uid,
-      triggeringUserName: currentUser.displayName || 'Anonymous User',
-      triggeringUserAvatar: currentUser.photoURL || '',
+      triggeringUserName: senderDisplayName,
+      triggeringUserAvatar: senderPhotoURL,
       type,
       message: getNotificationMessage(type),
       postId: post.id,
@@ -74,7 +87,6 @@ const createNotification = async (currentUser, recipientId, type, post, addition
     const notificationsRef = collection(firestore, 'users', recipientId, 'notifications');
     await addDoc(notificationsRef, notificationData);
 
-    console.log('Notification created successfully:', type);
     return true;
   } catch (error) {
     console.error('Error creating notification:', error);
@@ -122,29 +134,110 @@ const findCommentById = (commentsList, id) => {
   return null;
 };
 
+// Helper: Render text with blue @mentions (simple: @ to next space)
+const renderTextWithMentions = (text, allUsers, navigation) => {
+  if (!text) return null;
+  const regex = /(@[^\s]+)/g;
+  const parts = [];
+  let lastIndex = 0;
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push(text.slice(lastIndex, match.index));
+    }
+    const mention = match[1];
+    const username = mention.slice(1);
+    const user = allUsers.find(u => u.displayName === username);
+    parts.push(
+      <Text
+        key={match.index}
+        style={{ color: '#4A6FFF' }}
+        onPress={() => {
+          if (user) navigation.push(`/users/${user.id}`);
+        }}
+      >
+        {mention}
+      </Text>
+    );
+    lastIndex = match.index + mention.length;
+  }
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex));
+  }
+  return parts;
+};
+
 // Comment Item Component
-const CommentItem = ({ comment, onReply, onLike, isReply = false, colors }) => {
+const CommentItem = ({ comment, onReply, onLike, isReply = false, colors, allUsers, navigation }) => {
   const [openReplies, setOpenReplies] = useState(false);
   const [replyText, setReplyText] = useState('');
   const [replyLoading, setReplyLoading] = useState(false);
+  const [showMentionDropdown, setShowMentionDropdown] = useState(false);
+  const [mentionDropdown, setMentionDropdown] = useState([]);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const replyInputRef = useRef();
+
+  // Handle @ mention detection in reply input
+  const handleReplyInputChange = (text) => {
+    setReplyText(text);
+    const caret = replyInputRef.current?.selection?.start ?? text.length;
+    const match = /@([\w]*)$/.exec(text.slice(0, caret));
+    if (match) {
+      const query = match[1].toLowerCase();
+      if (query.length === 0) {
+        setMentionDropdown(allUsers);
+        setShowMentionDropdown(true);
+        setMentionQuery('');
+      } else {
+        const filtered = allUsers.filter(u => u.displayName.toLowerCase().includes(query));
+        setMentionDropdown(filtered);
+        setShowMentionDropdown(true);
+        setMentionQuery(query);
+      }
+    } else {
+      setShowMentionDropdown(false);
+      setMentionQuery('');
+    }
+  };
+
+  // Insert selected username into reply input
+  const handleSelectMention = (user) => {
+    const text = replyText;
+    const caret = replyInputRef.current?.selection?.start ?? text.length;
+    const before = text.slice(0, caret);
+    const after = text.slice(caret);
+    const newBefore = before.replace(/@([\w]*)$/, `@${user.displayName} `);
+    setReplyText(newBefore + after);
+    setShowMentionDropdown(false);
+    setMentionQuery('');
+    setTimeout(() => replyInputRef.current?.focus(), 10);
+  };
 
   const liked = auth.currentUser && comment.likedBy?.includes(auth.currentUser.uid);
 
   const handleLikeComment = async () => {
     if (!auth.currentUser) return;
-    await onLike(comment.id, liked);
+    if (isReply && comment.parentCommentId) {
+      await onLike(comment.id, liked, true, comment.parentCommentId);
+    } else {
+      await onLike(comment.id, liked, false, null);
+    }
   };
 
   const handleReply = async () => {
     if (replyText.trim() === '' || !auth.currentUser) return;
     setReplyLoading(true);
+    setReplyText(''); // Clear immediately
     try {
       await onReply(comment.id, replyText.trim());
-      setReplyText('');
-      setOpenReplies(true); // Keep replies expanded after adding a reply
+      // Tagging notification for replies
+      const mentionedNames = parseMentions(replyText.trim());
+      console.log('Parsed mentions in reply:', mentionedNames);
+      await sendTaggingNotifications(auth.currentUser, mentionedNames, allUsers, post, replyText.trim(), 'reply');
     } catch (error) {
-      Alert.alert('Error', 'Failed to add reply');
+      // No error modal
     } finally {
+      setOpenReplies(true); // Keep replies expanded after adding a reply
       setReplyLoading(false);
     }
   };
@@ -173,7 +266,9 @@ const CommentItem = ({ comment, onReply, onLike, isReply = false, colors }) => {
               {comment.username}
             </Text>
           </TouchableOpacity>
-          <Text style={[styles.commentText, { color: colors.textSecondary }]}>{comment.text}</Text>
+          <Text style={[styles.commentText, { color: colors.textSecondary, flexWrap: 'wrap' }]}> 
+            {renderTextWithMentions(comment.text, allUsers, router)}
+          </Text>
           <Text style={[styles.commentTime, { color: colors.textTertiary }]}>
             {comment.timestamp?.toDate().toLocaleString()}
           </Text>
@@ -224,15 +319,26 @@ const CommentItem = ({ comment, onReply, onLike, isReply = false, colors }) => {
 
           {/* Reply Input - Only show when expanded and it's a top-level comment */}
           {openReplies && !isReply && (
-            <View style={[styles.replyInputContainer, { backgroundColor: colors.card }]}>
+            <View style={[styles.replyInputContainer, { backgroundColor: colors.card }]}> 
               <TextInput
+                ref={replyInputRef}
                 style={[styles.replyInput, { color: colors.text }]}
                 placeholder="Add a reply..."
                 placeholderTextColor={colors.placeholder}
                 value={replyText}
-                onChangeText={setReplyText}
+                onChangeText={handleReplyInputChange}
                 multiline
               />
+              {showMentionDropdown && mentionDropdown.length > 0 && (
+                <View style={{ position: 'absolute', top: 40, left: 0, right: 0, backgroundColor: colors.card, borderRadius: 8, zIndex: 10, maxHeight: 176, borderWidth: 1, borderColor: colors.border, overflow: 'scroll' }}>
+                  {mentionDropdown.slice(0, 6).map(item => (
+                    <TouchableOpacity key={item.id} style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }} onPress={() => handleSelectMention(item)}>
+                      <Image source={item.photoURL ? { uri: item.photoURL } : { uri: anonymousAvatar }} style={{ width: 28, height: 28, borderRadius: 14, marginRight: 8 }} />
+                      <Text style={{ color: colors.text }}>{item.displayName}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
               <View style={styles.replyInputActions}>
                 <TouchableOpacity 
                   style={styles.replyCancelButton}
@@ -266,11 +372,13 @@ const CommentItem = ({ comment, onReply, onLike, isReply = false, colors }) => {
           {comment.replies.map(reply => (
             <CommentItem 
               key={reply.id} 
-              comment={reply} 
+              comment={{ ...reply, parentCommentId: comment.id }}
               onReply={onReply} 
               onLike={onLike}
               isReply={true}
               colors={colors}
+              allUsers={allUsers}
+              navigation={navigation}
             />
           ))}
         </View>
@@ -297,6 +405,103 @@ export default function PostDetail() {
     reply: false,
     eyewitness: false,
   });
+  // --- Tagging/Autocomplete state ---
+  const [allUsers, setAllUsers] = useState([]); // All users for autocomplete
+  const [mentionDropdown, setMentionDropdown] = useState([]); // Filtered users
+  const [showMentionDropdown, setShowMentionDropdown] = useState(false);
+  const [mentionQuery, setMentionQuery] = useState('');
+  const commentInputRef = useRef();
+  const [reportModalVisible, setReportModalVisible] = useState(false);
+  const [selectedReportReason, setSelectedReportReason] = useState('');
+  const reportReasons = [
+    { key: 'offensive', label: 'Offensive' },
+    { key: 'misleading', label: 'Misleading' },
+    { key: 'spam', label: 'Spam' },
+    { key: 'other', label: 'Other' },
+  ];
+  const [reportDetails, setReportDetails] = useState('');
+
+  // Fetch all users for autocomplete
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const usersRef = collection(firestore, 'users');
+        const querySnapshot = await getDocs(usersRef);
+        const users = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          displayName: doc.data().displayName || '',
+          photoURL: doc.data().photoURL || '',
+        }));
+        setAllUsers(users);
+      } catch (err) {
+        console.error('Error fetching users for mentions:', err);
+      }
+    };
+    fetchUsers();
+  }, []);
+
+  // Handle @ mention detection in comment input
+  const handleCommentInputChange = (text) => {
+    setInputComment(text);
+    // Find last @ and get the query after it
+    const match = /@([\w]*)$/.exec(text.slice(0, commentInputRef.current?.selection?.start ?? text.length));
+    if (match) {
+      const query = match[1].toLowerCase();
+      if (query.length === 0) {
+        setMentionDropdown(allUsers);
+        setShowMentionDropdown(true);
+        setMentionQuery('');
+      } else {
+        const filtered = allUsers.filter(u => u.displayName.toLowerCase().includes(query));
+        setMentionDropdown(filtered);
+        setShowMentionDropdown(true);
+        setMentionQuery(query);
+      }
+    } else {
+      setShowMentionDropdown(false);
+      setMentionQuery('');
+    }
+  };
+
+  // Insert selected username into comment input
+  const handleSelectMention = (user) => {
+    // Replace the last @query with @username
+    const text = inputComment;
+    const caret = commentInputRef.current?.selection?.start ?? text.length;
+    const before = text.slice(0, caret);
+    const after = text.slice(caret);
+    const newBefore = before.replace(/@([\w]*)$/, `@${user.displayName} `);
+    setInputComment(newBefore + after);
+    setShowMentionDropdown(false);
+    setMentionQuery('');
+    // Refocus input
+    setTimeout(() => commentInputRef.current?.focus(), 10);
+  };
+
+  // Add this function to handle post deletion
+  const handleDeletePost = async () => {
+    Alert.alert(
+      'Delete Post',
+      'Are you sure you want to delete this post? This action cannot be undone.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const postRef = doc(firestore, 'posts', post.id);
+              await deleteDoc(postRef);
+              Alert.alert('Deleted', 'Your post has been deleted.');
+              router.push('/home');
+            } catch (err) {
+              Alert.alert('Error', 'Failed to delete post.');
+            }
+          }
+        }
+      ]
+    );
+  };
 
   // Fetch post data with real-time listener
   useEffect(() => {
@@ -466,6 +671,57 @@ export default function PostDetail() {
     }
   };
 
+  // Helper: Find user by displayName
+  const findUserByDisplayName = (name) => {
+    return allUsers.find(u => u.displayName && u.displayName.toLowerCase() === name.toLowerCase());
+  };
+
+  // Helper: Parse @mentions from text
+  const parseMentions = (text) => {
+    // Only match @username up to the next space or end
+    const regex = /@([^\s]+)/g;
+    const mentions = [];
+    let match;
+    while ((match = regex.exec(text)) !== null) {
+      mentions.push(match[1].trim());
+    }
+    return mentions;
+  };
+
+  // Helper: Send tagging notifications
+  const sendTaggingNotifications = async (currentUser, mentionedNames, allUsers, post, contextText, contextType) => {
+    const notifiedUserIds = new Set();
+    // Fetch the current user's Firestore profile for displayName
+    let taggerName = 'Anonymous User';
+    try {
+      const userDocRef = doc(firestore, 'users', currentUser.uid);
+      const userDoc = await getDoc(userDocRef);
+      if (userDoc.exists()) {
+        const userData = userDoc.data();
+        taggerName = userData.displayName || 'Anonymous User';
+      } else {
+        taggerName = currentUser.displayName || 'Anonymous User';
+      }
+    } catch (err) {
+      taggerName = currentUser.displayName || 'Anonymous User';
+    }
+    for (const name of mentionedNames) {
+      const user = allUsers.find(u => u.displayName && u.displayName.toLowerCase() === name.toLowerCase());
+      if (user && user.id !== currentUser.uid && !notifiedUserIds.has(user.id)) {
+        let type = 'mention';
+        let message = '';
+        if (contextType === 'comment') message = `${taggerName} tagged you in a comment.`;
+        else if (contextType === 'reply') message = `${taggerName} tagged you in a reply.`;
+        else if (contextType === 'post') message = `${taggerName} tagged you in a post.`;
+        console.log('Sending tagging notification to', user.displayName, user.id, 'for', contextType);
+        await createNotification(currentUser, user.id, type, post, { commentText: contextText, message });
+        console.log('Tagging notification sent to', user.displayName, user.id);
+        notifiedUserIds.add(user.id);
+      }
+    }
+  };
+
+  // Modified handleAddComment to notify tagged users
   const handleAddComment = async () => {
     if (!auth.currentUser || !inputComment.trim() || actionLoading.comment) return;
 
@@ -498,6 +754,11 @@ export default function PostDetail() {
       if (post.creatorId !== auth.currentUser.uid) {
         await createNotification(auth.currentUser, post.creatorId, 'comment', post);
       }
+
+      // --- Tagging notification logic ---
+      const mentionedNames = parseMentions(inputComment.trim());
+      console.log('Parsed mentions in comment:', mentionedNames);
+      await sendTaggingNotifications(auth.currentUser, mentionedNames, allUsers, post, inputComment.trim(), 'comment');
 
       setInputComment('');
     } catch (err) {
@@ -556,6 +817,16 @@ export default function PostDetail() {
               />
               <Text style={[styles.postUsername, { color: colors.text }]}>{post.isAnonymous ? 'Anonymous' : (post.username || 'Unnamed User')}</Text>
             </TouchableOpacity>
+            {/* Show delete icon only for post creator, else show report button */}
+            {auth.currentUser && post.creatorId === auth.currentUser.uid ? (
+              <TouchableOpacity onPress={handleDeletePost} style={{ marginLeft: 'auto', padding: 8 }}>
+                <MaterialIcons name="delete-outline" size={24} color={colors.error} />
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={() => setReportModalVisible(true)} style={{ marginLeft: 'auto', padding: 8 }}>
+                <MaterialIcons name="flag" size={24} color={colors.error} />
+              </TouchableOpacity>
+            )}
           </View>
           {/* Post Image */}
           <View style={[styles.postImageContainer, { backgroundColor: colors.border }]}> 
@@ -568,7 +839,9 @@ export default function PostDetail() {
           {/* Post Content */}
           <View style={styles.postContent}>
             <Text style={[styles.postTitle, { color: colors.text }]}>{post.title}</Text>
-            <Text style={[styles.postCaption, { color: colors.textSecondary }]}>{post.caption}</Text>
+            <Text style={[styles.postCaption, { color: colors.textSecondary, flexWrap: 'wrap' }]}> 
+              {renderTextWithMentions(post.caption, allUsers, router)}
+            </Text>
             {/* Tags */}
             <View style={styles.postTags}>
               {post.tags?.map(tag => (
@@ -628,14 +901,27 @@ export default function PostDetail() {
               source={auth.currentUser?.photoURL ? { uri: auth.currentUser.photoURL } : { uri: anonymousAvatar }} 
               style={styles.commentInputAvatar} 
             />
-            <TextInput
-              style={[styles.commentInput, { color: colors.text }]}
-              placeholder="Add a comment..."
-              placeholderTextColor={colors.placeholder}
-              value={inputComment}
-              onChangeText={setInputComment}
-              multiline
-            />
+            <View style={{ flex: 1 }}>
+              <TextInput
+                ref={commentInputRef}
+                style={[styles.commentInput, { color: colors.text }]}
+                placeholder="Add a comment..."
+                placeholderTextColor={colors.placeholder}
+                value={inputComment}
+                onChangeText={handleCommentInputChange}
+                multiline
+              />
+              {showMentionDropdown && mentionDropdown.length > 0 && (
+                <View style={{ position: 'absolute', top: 40, left: 0, right: 0, backgroundColor: colors.card, borderRadius: 8, zIndex: 10, maxHeight: 176, borderWidth: 1, borderColor: colors.border, overflow: 'scroll' }}>
+                  {mentionDropdown.slice(0, 6).map(item => (
+                    <TouchableOpacity key={item.id} style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }} onPress={() => handleSelectMention(item)}>
+                      <Image source={item.photoURL ? { uri: item.photoURL } : { uri: anonymousAvatar }} style={{ width: 28, height: 28, borderRadius: 14, marginRight: 8 }} />
+                      <Text style={{ color: colors.text }}>{item.displayName}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              )}
+            </View>
             <TouchableOpacity 
               style={[styles.commentPostButton, (inputComment.trim() === '' || actionLoading.comment) && styles.commentPostButtonDisabled, { backgroundColor: inputComment.trim() === '' || actionLoading.comment ? colors.textTertiary : colors.primary }]} 
               onPress={handleAddComment}
@@ -664,49 +950,111 @@ export default function PostDetail() {
                   key={comment.id} 
                   comment={comment} 
                   onReply={async (commentId, text) => {
-                    const commentRef = doc(firestore, 'posts', post.id, 'comments', commentId);
-                    const parentComment = comments.find(c => c.id === commentId);
-                    await updateDoc(commentRef, {
-                      replies: arrayUnion({
-                        id: `reply-${Date.now()}`,
-                        text: text,
-                        senderId: auth.currentUser.uid,
-                        username: auth.currentUser.displayName || 'Anonymous User',
-                        userAvatar: auth.currentUser.photoURL,
-                        timestamp: Timestamp.now(),
-                        likes: 0,
-                        likedBy: [],
-                      })
-                    });
-                    const postRef = doc(firestore, 'posts', post.id);
-                    await updateDoc(postRef, {
-                      commentCount: (post.commentCount || 0) + 1
-                    });
-                    if (parentComment && parentComment.senderId !== auth.currentUser.uid) {
-                      await createNotification(auth.currentUser, parentComment.senderId, 'reply', post);
+                    // Firestore update for reply
+                    try {
+                      const commentRef = doc(firestore, 'posts', post.id, 'comments', commentId);
+                      const parentComment = comments.find(c => c.id === commentId);
+
+                      // Fetch sender's Firestore profile for displayName
+                      let senderDisplayName = 'Anonymous User';
+                      let senderPhotoURL = '';
+                      const senderDocRef = doc(firestore, 'users', auth.currentUser.uid);
+                      const senderDoc = await getDoc(senderDocRef);
+                      if (senderDoc.exists()) {
+                        const senderData = senderDoc.data();
+                        senderDisplayName = senderData.displayName || 'Anonymous User';
+                        senderPhotoURL = senderData.photoURL || auth.currentUser.photoURL || '';
+                      } else {
+                        senderDisplayName = auth.currentUser.displayName || auth.currentUser.email || auth.currentUser.uid || 'Anonymous User';
+                        senderPhotoURL = auth.currentUser.photoURL || '';
+                      }
+
+                      await updateDoc(commentRef, {
+                        replies: arrayUnion({
+                          id: `reply-${Date.now()}`,
+                          text: text,
+                          senderId: auth.currentUser.uid,
+                          username: senderDisplayName,
+                          userAvatar: senderPhotoURL,
+                          timestamp: Timestamp.now(),
+                          likes: 0,
+                          likedBy: [],
+                        })
+                      });
+                      const postRef = doc(firestore, 'posts', post.id);
+                      await updateDoc(postRef, {
+                        commentCount: (post.commentCount || 0) + 1
+                      });
+                      if (parentComment && parentComment.senderId !== auth.currentUser.uid) {
+                        await createNotification(auth.currentUser, parentComment.senderId, 'reply', post);
+                      }
+                    } catch (err) {
+                      // Only show alert if Firestore update fails
+                      throw err;
+                    }
+                    // Notification logic (do not alert user if this fails)
+                    try {
+                      const mentionedNames = parseMentions(text.trim());
+                      console.log('Parsed mentions in reply:', mentionedNames);
+                      await sendTaggingNotifications(auth.currentUser, mentionedNames, allUsers, post, text.trim(), 'reply');
+                    } catch (err) {
+                      console.error('Failed to send tagging notification:', err);
                     }
                   }}
-                  onLike={async (commentId, liked) => {
-                    const commentRef = doc(firestore, 'posts', post.id, 'comments', commentId);
-                    const commentToUpdate = comments.find(c => c.id === commentId);
-                    if (commentToUpdate) {
-                      if (liked) {
-                        await updateDoc(commentRef, {
-                          likes: (commentToUpdate.likes || 0) - 1,
-                          likedBy: arrayRemove(auth.currentUser.uid),
-                        });
-                      } else {
-                        await updateDoc(commentRef, {
-                          likes: (commentToUpdate.likes || 0) + 1,
-                          likedBy: arrayUnion(auth.currentUser.uid),
-                        });
-                        if (commentToUpdate.senderId !== auth.currentUser.uid) {
-                          await createNotification(auth.currentUser, commentToUpdate.senderId, 'comment_like', post);
+                  onLike={async (commentId, liked, isReply = false, parentCommentId = null) => {
+                    if (!isReply) {
+                      // Like/unlike a top-level comment
+                      const commentRef = doc(firestore, 'posts', post.id, 'comments', commentId);
+                      const commentToUpdate = comments.find(c => c.id === commentId);
+                      if (commentToUpdate) {
+                        if (liked) {
+                          await updateDoc(commentRef, {
+                            likes: (commentToUpdate.likes || 0) - 1,
+                            likedBy: arrayRemove(auth.currentUser.uid),
+                          });
+                        } else {
+                          await updateDoc(commentRef, {
+                            likes: (commentToUpdate.likes || 0) + 1,
+                            likedBy: arrayUnion(auth.currentUser.uid),
+                          });
+                          if (commentToUpdate.senderId !== auth.currentUser.uid) {
+                            await createNotification(auth.currentUser, commentToUpdate.senderId, 'comment_like', post);
+                          }
+                        }
+                      }
+                    } else {
+                      // Like/unlike a reply
+                      const parentCommentRef = doc(firestore, 'posts', post.id, 'comments', parentCommentId);
+                      const parentComment = comments.find(c => c.id === parentCommentId);
+                      if (parentComment && parentComment.replies) {
+                        const replyIndex = parentComment.replies.findIndex(r => r.id === commentId);
+                        if (replyIndex !== -1) {
+                          const reply = parentComment.replies[replyIndex];
+                          let updatedReply = { ...reply };
+                          if (liked) {
+                            updatedReply.likes = (reply.likes || 0) - 1;
+                            updatedReply.likedBy = (reply.likedBy || []).filter(uid => uid !== auth.currentUser.uid);
+                          } else {
+                            updatedReply.likes = (reply.likes || 0) + 1;
+                            updatedReply.likedBy = [...(reply.likedBy || []), auth.currentUser.uid];
+                          }
+                          // Update the replies array
+                          const updatedReplies = [...parentComment.replies];
+                          updatedReplies[replyIndex] = updatedReply;
+                          await updateDoc(parentCommentRef, {
+                            replies: updatedReplies
+                          });
+                          // Optionally, send notification to reply author
+                          if (!liked && reply.senderId !== auth.currentUser.uid) {
+                            await createNotification(auth.currentUser, reply.senderId, 'reply_like', post);
+                          }
                         }
                       }
                     }
                   }}
                   colors={colors}
+                  allUsers={allUsers}
+                  navigation={router}
                 />
               ))}
             </View>
@@ -714,6 +1062,57 @@ export default function PostDetail() {
         </View>
       </ScrollView>
       <FooterNav />
+      {/* Report Modal */}
+      <Modal
+        visible={reportModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setReportModalVisible(false)}
+      >
+        <View style={{ flex: 1, backgroundColor: '#000A', justifyContent: 'center', alignItems: 'center' }}>
+          <View style={{ backgroundColor: colors.card, borderRadius: 16, padding: 24, width: '85%', maxWidth: 340 }}>
+            <Text style={{ color: colors.text, fontWeight: 'bold', fontSize: 18, marginBottom: 16 }}>Report Post</Text>
+            {reportReasons.map(r => (
+              <TouchableOpacity
+                key={r.key}
+                style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}
+                onPress={() => setSelectedReportReason(r.key)}
+              >
+                <MaterialIcons name={selectedReportReason === r.key ? 'radio-button-checked' : 'radio-button-unchecked'} size={20} color={colors.primary} />
+                <Text style={{ color: colors.text, marginLeft: 10 }}>{r.label}</Text>
+              </TouchableOpacity>
+            ))}
+            {selectedReportReason === 'other' && (
+              <TextInput
+                style={{ backgroundColor: colors.input, color: colors.text, borderRadius: 8, padding: 10, marginBottom: 12, borderWidth: 1, borderColor: colors.border }}
+                placeholder="Please specify..."
+                placeholderTextColor={colors.placeholder}
+                value={reportDetails}
+                onChangeText={setReportDetails}
+                multiline
+              />
+            )}
+            <View style={{ flexDirection: 'row', justifyContent: 'flex-end', marginTop: 8 }}>
+              <TouchableOpacity onPress={() => setReportModalVisible(false)} style={{ marginRight: 16 }}>
+                <Text style={{ color: colors.primary, fontWeight: 'bold', fontSize: 15 }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => {
+                  // No backend yet, just close modal
+                  setReportModalVisible(false);
+                  setSelectedReportReason('');
+                  setReportDetails('');
+                  Alert.alert('Reported', 'Thank you for reporting. Our team will review this post.');
+                }}
+                disabled={!selectedReportReason}
+                style={{ opacity: selectedReportReason ? 1 : 0.5 }}
+              >
+                <Text style={{ color: colors.error, fontWeight: 'bold', fontSize: 15 }}>Report</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }

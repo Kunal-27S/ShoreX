@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useRef } from "react";
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, Dimensions, ScrollView, BackHandler } from "react-native";
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, Dimensions, ScrollView, BackHandler, ToastAndroid, Platform } from "react-native";
 import { router } from "expo-router";
 import { auth } from "../firebaseConfig";
 import { signInWithEmailAndPassword, sendEmailVerification } from "firebase/auth";
 import { MaterialIcons } from '@expo/vector-icons';
+import { useFocusEffect } from 'expo-router';
 
 const marqueeImages = [
-  require('../assets/images/marquee/image1.png'),
-  require('../assets/images/marquee/image2.png'),
-  require('../assets/images/marquee/image3.png'),
-  require('../assets/images/marquee/image4.png'),
-  require('../assets/images/marquee/image5.png'),
+  require('../assets/images/marquee/image1_converted.png'),
+  require('../assets/images/marquee/image2_converted.png'),
+  require('../assets/images/marquee/image3_converted.png'),
+  require('../assets/images/marquee/image4_converted.png'),
+  require('../assets/images/marquee/image5_converted.png'),
   require('../assets/images/marquee/image6.png'),
 ];
 
@@ -67,6 +68,7 @@ export default function SignIn() {
   const [unverifiedUser, setUnverifiedUser] = useState(null);
   const [cooldownTime, setCooldownTime] = useState(0);
   const [isResending, setIsResending] = useState(false);
+  const [lastBackPress, setLastBackPress] = useState(0);
 
   useEffect(() => {
     let timer;
@@ -84,11 +86,25 @@ export default function SignIn() {
     return () => clearInterval(timer);
   }, [cooldownTime]);
 
-  useEffect(() => {
-    const backAction = () => true; // Block back action on sign-in
-    const backHandler = BackHandler.addEventListener('hardwareBackPress', backAction);
-    return () => backHandler.remove();
-  }, []);
+  useFocusEffect(
+    React.useCallback(() => {
+      const onBackPress = () => {
+        const now = Date.now();
+        if (lastBackPress && now - lastBackPress < 2000) {
+          BackHandler.exitApp();
+          return true;
+        } else {
+          setLastBackPress(now);
+          if (Platform.OS === 'android') {
+            ToastAndroid.show('Press again to exit', ToastAndroid.SHORT);
+          }
+          return true;
+        }
+      };
+      const sub = BackHandler.addEventListener('hardwareBackPress', onBackPress);
+      return () => sub.remove();
+    }, [lastBackPress])
+  );
 
   const handleSignIn = async () => {
     setLoading(true);
@@ -105,7 +121,7 @@ export default function SignIn() {
         return;
       }
       setLoading(false);
-      router.push('/home');
+      router.replace('/home');
     } catch (error) {
       let errorMessage = 'Failed to sign in. ';
       if (error.code === 'auth/user-not-found' || error.code === 'auth/wrong-password') {

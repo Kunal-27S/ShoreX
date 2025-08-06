@@ -3,11 +3,11 @@ import { View, Text, Image, StyleSheet, ScrollView, Animated, Dimensions, Toucha
 import { router } from 'expo-router';
 
 const marqueeImages = [
-  require('../assets/images/marquee/image1.png'),
-  require('../assets/images/marquee/image2.png'),
-  require('../assets/images/marquee/image3.png'),
-  require('../assets/images/marquee/image4.png'),
-  require('../assets/images/marquee/image5.png'),
+  require('../assets/images/marquee/image1_converted.png'),
+  require('../assets/images/marquee/image2_converted.png'),
+  require('../assets/images/marquee/image3_converted.png'),
+  require('../assets/images/marquee/image4_converted.png'),
+  require('../assets/images/marquee/image5_converted.png'),
   require('../assets/images/marquee/image6.png'),
 ];
 

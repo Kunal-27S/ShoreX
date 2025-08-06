@@ -9,9 +9,9 @@ const SCREEN_WIDTH = Dimensions.get('window').width;
 const steps = ['Welcome', 'Discover', 'Connect', 'Complete'];
 
 const onboardingImages = [
-  require('../assets/images/onboarding/connect.jpg'),
-  require('../assets/images/onboarding/community.jpg'),
-  require('../assets/images/onboarding/inform.jpg'),
+  require('../assets/images/onboarding/connect.png'),
+  require('../assets/images/onboarding/community.png'),
+  require('../assets/images/onboarding/inform.png'),
   require('../assets/images/onboarding/step2-1.png'),
   require('../assets/images/onboarding/step2-2.png'),
   require('../assets/images/onboarding/step2-3.png'),
@@ -21,9 +21,9 @@ const onboardingImages = [
 ];
 
 const onboardingCardImages = [
-  require('../assets/images/onboarding/connect.jpg'),
-  require('../assets/images/onboarding/community.jpg'),
-  require('../assets/images/onboarding/inform.jpg'),
+  require('../assets/images/onboarding/connect.png'),
+  require('../assets/images/onboarding/community.png'),
+  require('../assets/images/onboarding/inform.png'),
 ];
 
 export default function OnboardingStepper({ visible, onClose }) {

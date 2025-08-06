@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ActivityIndicator, Image, TouchableOpacity, FlatList, Dimensions, ScrollView } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
-import { firestore } from '../../firebaseConfig';
+import { firestore, auth } from '../../firebaseConfig';
 import { collection, query, where, orderBy, getDocs, doc, getDoc, Timestamp } from 'firebase/firestore';
 import FooterNav from '../../components/FooterNav';
 import HeaderBar from '../../components/HeaderBar';
@@ -142,9 +142,32 @@ export default function UserProfile() {
     return isExpired && now < expiredDisplayEndTime;
   };
 
-  const filteredPosts = userPosts.filter(post =>
+  // Filter posts: hide anonymous posts from other users
+  const isOwnProfile = auth.currentUser && auth.currentUser.uid === userId;
+  const visiblePosts = isOwnProfile ? userPosts : userPosts.filter(post => !post.isAnonymous);
+  const filteredPosts = visiblePosts.filter(post =>
     tab === 0 ? isPostActive(post) : shouldDisplayExpiredPost(post)
   );
+
+  // Calculate stats based on visiblePosts
+  useEffect(() => {
+    const now = Timestamp.now().toMillis();
+    // Replace processedPosts with visiblePosts for stats
+    const activePosts = visiblePosts.filter(post => 
+      post.expiresAt?.toMillis() > now
+    ).length;
+    const expiredPosts = visiblePosts.length - activePosts;
+    const totalLikes = visiblePosts.reduce((sum, post) => sum + (post.likes || 0), 0);
+    const totalEyewitnesses = visiblePosts.reduce((sum, post) => sum + (post.eyewitnesses || 0), 0);
+
+    setUserStats({
+      posts: visiblePosts.length,
+      likes: totalLikes,
+      eyewitnesses: totalEyewitnesses,
+      activePosts,
+      expiredPosts
+    });
+  }, [userId, userPosts, tab]);
 
   const handleCardClick = (postId) => {
     router.push(`/posts/${postId}`);
@@ -165,93 +188,95 @@ export default function UserProfile() {
       </View>
     );
   }
+
+  // Move all header content into a header component for FlatList
+  const renderHeader = () => (
+    <>
+      <View style={styles.profileHeader}>
+        <Image
+          source={userProfile?.photoURL ? { uri: userProfile.photoURL } : placeholderImage}
+          style={styles.avatar}
+        />
+        <Text style={[styles.displayName, { color: colors.text }]}>{userProfile?.displayName || 'User'}</Text>
+        {userProfile?.nickname && <Text style={[styles.nickname, { color: colors.textTertiary }]}>@{userProfile.nickname}</Text>}
+        <Text style={[styles.bio, { color: colors.textSecondary }]}>{userProfile?.bio || 'No bio yet'}</Text>
+      </View>
+      {/* Stats Section */}
+      <View style={styles.statsContainer}>
+        <View style={styles.statsRow}>
+          <View style={styles.statBox}>
+            <Text style={[styles.statValue, { color: colors.text }]}>{userStats.posts}</Text>
+            <Text style={[styles.statLabel, { color: colors.textTertiary }]}>Posts</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={[styles.statValue, { color: colors.text }]}>{userStats.likes}</Text>
+            <Text style={[styles.statLabel, { color: colors.textTertiary }]}>Likes</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={[styles.statValue, { color: colors.text }]}>{userStats.eyewitnesses}</Text>
+            <Text style={[styles.statLabel, { color: colors.textTertiary }]}>Witnesses</Text>
+          </View>
+        </View>
+        <View style={styles.statsRow}>
+          <View style={styles.statBox}>
+            <Text style={[styles.statValue, { color: colors.text }]}>{userStats.activePosts}</Text>
+            <Text style={[styles.statLabel, { color: colors.textTertiary }]}>Active Posts</Text>
+          </View>
+          <View style={styles.statBox}>
+            <Text style={[styles.statValue, { color: colors.text }]}>{userStats.expiredPosts}</Text>
+            <Text style={[styles.statLabel, { color: colors.textTertiary }]}>Expired Posts</Text>
+          </View>
+        </View>
+      </View>
+      <Text style={[styles.sectionTitle, { color: colors.text }]}>Posts</Text>
+      {/* Tabs */}
+      <View style={styles.tabRow}>
+        <TouchableOpacity style={[styles.tab, { backgroundColor: tab === 0 ? colors.primary : colors.card }]} onPress={() => setTab(0)}>
+          <Text style={[styles.tabText, { color: tab === 0 ? '#fff' : colors.textTertiary, fontWeight: tab === 0 ? 'bold' : 'normal' }]}>Active Posts</Text>
+        </TouchableOpacity>
+        <TouchableOpacity style={[styles.tab, { backgroundColor: tab === 1 ? colors.primary : colors.card }]} onPress={() => setTab(1)}>
+          <Text style={[styles.tabText, { color: tab === 1 ? '#fff' : colors.textTertiary, fontWeight: tab === 1 ? 'bold' : 'normal' }]}>Expired Posts</Text>
+        </TouchableOpacity>
+      </View>
+    </>
+  );
+
+  // Replace ScrollView with FlatList as the main container
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <HeaderBar />
-      <ScrollView style={[styles.container, { backgroundColor: colors.background }]} contentContainerStyle={{ padding: 16 }}>
-        <View style={styles.profileHeader}>
-          <Image
-            source={userProfile?.photoURL ? { uri: userProfile.photoURL } : placeholderImage}
-            style={styles.avatar}
-          />
-          <Text style={[styles.displayName, { color: colors.text }]}>{userProfile?.displayName || 'User'}</Text>
-          {userProfile?.nickname && <Text style={[styles.nickname, { color: colors.textTertiary }]}>@{userProfile.nickname}</Text>}
-          <Text style={[styles.bio, { color: colors.textSecondary }]}>{userProfile?.bio || 'No bio yet'}</Text>
-        </View>
-        {/* Stats Section */}
-        <View style={styles.statsContainer}>
-          <View style={styles.statsRow}>
-            <View style={styles.statBox}>
-              <Text style={[styles.statValue, { color: colors.text }]}>{userStats.posts}</Text>
-              <Text style={[styles.statLabel, { color: colors.textTertiary }]}>Posts</Text>
-            </View>
-            <View style={styles.statBox}>
-              <Text style={[styles.statValue, { color: colors.text }]}>{userStats.likes}</Text>
-              <Text style={[styles.statLabel, { color: colors.textTertiary }]}>Likes</Text>
-            </View>
-            <View style={styles.statBox}>
-              <Text style={[styles.statValue, { color: colors.text }]}>{userStats.eyewitnesses}</Text>
-              <Text style={[styles.statLabel, { color: colors.textTertiary }]}>Witnesses</Text>
-            </View>
-          </View>
-          <View style={styles.statsRow}>
-            <View style={styles.statBox}>
-              <Text style={[styles.statValue, { color: colors.text }]}>{userStats.activePosts}</Text>
-              <Text style={[styles.statLabel, { color: colors.textTertiary }]}>Active Posts</Text>
-            </View>
-            <View style={styles.statBox}>
-              <Text style={[styles.statValue, { color: colors.text }]}>{userStats.expiredPosts}</Text>
-              <Text style={[styles.statLabel, { color: colors.textTertiary }]}>Expired Posts</Text>
-            </View>
-          </View>
-        </View>
-        <Text style={[styles.sectionTitle, { color: colors.text }]}>Posts</Text>
-        {/* Tabs */}
-        <View style={styles.tabRow}>
-          <TouchableOpacity style={[styles.tab, { backgroundColor: tab === 0 ? colors.primary : colors.card }]} onPress={() => setTab(0)}>
-            <Text style={[styles.tabText, { color: tab === 0 ? '#fff' : colors.textTertiary, fontWeight: tab === 0 ? 'bold' : 'normal' }]}>Active Posts</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={[styles.tab, { backgroundColor: tab === 1 ? colors.primary : colors.card }]} onPress={() => setTab(1)}>
-            <Text style={[styles.tabText, { color: tab === 1 ? '#fff' : colors.textTertiary, fontWeight: tab === 1 ? 'bold' : 'normal' }]}>Expired Posts</Text>
-          </TouchableOpacity>
-        </View>
-        {/* Posts List */}
-        {filteredPosts.length === 0 ? (
-          <Text style={[styles.emptyText, { color: colors.textTertiary }]}>No posts found in this category.</Text>
-        ) : (
-          <FlatList
-            data={filteredPosts}
-            keyExtractor={item => item.id}
-            renderItem={({ item }) => (
-              <TouchableOpacity style={[styles.card, { backgroundColor: colors.card }]} onPress={() => handleCardClick(item.id)}>
-                <Image
-                  source={item.imageUrl ? { uri: item.imageUrl } : placeholderImage}
-                  style={styles.cardImage}
-                  resizeMode="cover"
-                />
-                <View style={styles.cardContent}>
-                  <Text style={[styles.cardTitle, { color: colors.text }]}>{item.title}</Text>
-                  <View style={styles.cardTagsRow}>
-                    {item.tags?.map(tag => (
-                      <View key={tag} style={[styles.cardTag, { backgroundColor: colors.input }]}> 
-                        <Text style={[styles.cardTagText, { color: colors.primary }]}>{tag}</Text>
-                      </View>
-                    ))}
+      <FlatList
+        data={filteredPosts}
+        keyExtractor={item => item.id}
+        renderItem={({ item }) => (
+          <TouchableOpacity style={[styles.card, { backgroundColor: colors.card }]} onPress={() => handleCardClick(item.id)}>
+            <Image
+              source={item.imageUrl ? { uri: item.imageUrl } : placeholderImage}
+              style={styles.cardImage}
+              resizeMode="cover"
+            />
+            <View style={styles.cardContent}>
+              <Text style={[styles.cardTitle, { color: colors.text }]}>{item.title}</Text>
+              <View style={styles.cardTagsRow}>
+                {item.tags?.map(tag => (
+                  <View key={tag} style={[styles.cardTag, { backgroundColor: colors.input }]}> 
+                    <Text style={[styles.cardTagText, { color: colors.primary }]}>{tag}</Text>
                   </View>
-                  <View style={styles.cardStatsRow}>
-                    <Text style={[styles.statText, { color: colors.textTertiary }]}>❤️ {item.likes || 0}</Text>
-                    <Text style={[styles.statText, { color: colors.textTertiary }]}>💬 {item.commentCount || 0}</Text>
-                    <Text style={[styles.statText, { color: colors.textTertiary }]}>👁️ {item.eyewitnesses || 0}</Text>
-                  </View>
-                  <Text style={[styles.statusText, { color: colors.textTertiary }]}>{isPostActive(item) ? 'Active' : 'Expired'}</Text>
-                </View>
-              </TouchableOpacity>
-            )}
-            ListEmptyComponent={<Text style={[styles.emptyText, { color: colors.textTertiary }]}>No posts found in this category.</Text>}
-            contentContainerStyle={{ paddingBottom: 32 }}
-          />
+                ))}
+              </View>
+              <View style={styles.cardStatsRow}>
+                <Text style={[styles.statText, { color: colors.textTertiary }]}>❤️ {item.likes || 0}</Text>
+                <Text style={[styles.statText, { color: colors.textTertiary }]}>💬 {item.commentCount || 0}</Text>
+                <Text style={[styles.statText, { color: colors.textTertiary }]}>👁️ {item.eyewitnesses || 0}</Text>
+              </View>
+              <Text style={[styles.statusText, { color: colors.textTertiary }]}>{isPostActive(item) ? 'Active' : 'Expired'}</Text>
+            </View>
+          </TouchableOpacity>
         )}
-      </ScrollView>
+        ListHeaderComponent={renderHeader}
+        ListEmptyComponent={<Text style={[styles.emptyText, { color: colors.textTertiary }]}>No posts found in this category.</Text>}
+        contentContainerStyle={{ padding: 16, paddingBottom: 64 }}
+      />
       <FooterNav />
     </View>
   );

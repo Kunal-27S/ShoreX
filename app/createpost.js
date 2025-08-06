@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Image, ScrollView, Alert, Switch } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Image, ScrollView, Alert, Switch, FlatList, Platform } from 'react-native';
 import { auth, firestore, storage } from '../firebaseConfig';
-import { collection, addDoc, doc, getDoc, Timestamp, GeoPoint } from 'firebase/firestore';
+import { collection, addDoc, doc, getDoc, Timestamp, GeoPoint, onSnapshot, updateDoc, getDocs, increment, where, query } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import * as ImagePicker from 'expo-image-picker';
 import { router } from 'expo-router';
@@ -12,6 +12,16 @@ import HeaderBar from '../components/HeaderBar';
 import { useTheme } from '../contexts/ThemeContext';
 
 const placeholderImage = require('../assets/images/placeholder.png');
+
+const parseMentions = (text) => {
+  const regex = /@([\w]+)/g;
+  const mentions = [];
+  let match;
+  while ((match = regex.exec(text)) !== null) {
+    mentions.push(match[1].trim());
+  }
+  return mentions;
+};
 
 export default function CreatePost() {
   const { colors } = useTheme();
@@ -31,6 +41,19 @@ export default function CreatePost() {
   const [error, setError] = useState(null);
   const [statusMessage, setStatusMessage] = useState('');
   const [sliderWidth, setSliderWidth] = useState(0);
+  const [allUsers, setAllUsers] = useState([]);
+  const [taggedUsers, setTaggedUsers] = useState([]); // Array of user objects
+  const [tagUserQuery, setTagUserQuery] = useState('');
+  const [tagUserDropdown, setTagUserDropdown] = useState([]);
+  const [showTagUserDropdown, setShowTagUserDropdown] = useState(false);
+  const [showCaptionMentionDropdown, setShowCaptionMentionDropdown] = useState(false);
+  const [captionMentionDropdown, setCaptionMentionDropdown] = useState([]);
+  const [captionMentionQuery, setCaptionMentionQuery] = useState('');
+  const captionInputRef = React.useRef();
+  const [captionSelection, setCaptionSelection] = useState({ start: 0, end: 0 });
+  const [captionDropdownOffset, setCaptionDropdownOffset] = useState(0);
+  const captionInputLayout = React.useRef({ x: 0, y: 0 });
+  const hiddenTextRef = React.useRef();
 
   useEffect(() => {
     (async () => {
@@ -44,6 +67,24 @@ export default function CreatePost() {
     })();
   }, []);
 
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const usersRef = collection(firestore, 'users');
+        const querySnapshot = await getDocs(usersRef);
+        const users = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          displayName: doc.data().displayName || '',
+          photoURL: doc.data().photoURL || '',
+        }));
+        setAllUsers(users);
+      } catch (err) {
+        console.error('Error fetching users for tagging:', err);
+      }
+    };
+    fetchUsers();
+  }, []);
+
   const pickImage = async () => {
     let result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -51,7 +92,6 @@ export default function CreatePost() {
       quality: 0.7,
     });
     if (!result.canceled && result.assets && result.assets.length > 0) {
-      console.log('Image selected:', result.assets[0]);
       setImage(result.assets[0]);
     }
   };
@@ -65,6 +105,81 @@ export default function CreatePost() {
 
   const handleDeleteTag = (tagToDelete) => {
     setTags(tags.filter(tag => tag !== tagToDelete));
+  };
+
+  const handleTagUserInput = (text) => {
+    setTagUserQuery(text);
+    if (text.trim().length === 0) {
+      setTagUserDropdown([]);
+      setShowTagUserDropdown(false);
+      return;
+    }
+    const filtered = allUsers.filter(u => u.displayName.toLowerCase().includes(text.toLowerCase()) && !taggedUsers.some(tu => tu.id === u.id));
+    setTagUserDropdown(filtered);
+    setShowTagUserDropdown(filtered.length > 0);
+  };
+
+  const handleSelectTagUser = (user) => {
+    setTaggedUsers([...taggedUsers, user]);
+    setTagUserQuery('');
+    setTagUserDropdown([]);
+    setShowTagUserDropdown(false);
+  };
+
+  const handleRemoveTaggedUser = (userId) => {
+    setTaggedUsers(taggedUsers.filter(u => u.id !== userId));
+  };
+
+  // Handle @ mention detection in caption input
+  const handleCaptionInputChange = (text) => {
+    setCaption(text);
+    const caret = captionInputRef.current?.selection?.start ?? text.length;
+    const match = /@([\w]*)$/.exec(text.slice(0, caret));
+    if (match) {
+      const query = match[1].toLowerCase();
+      if (query.length === 0) {
+        setCaptionMentionDropdown(allUsers);
+        setShowCaptionMentionDropdown(true);
+        setCaptionMentionQuery('');
+      } else {
+        const filtered = allUsers.filter(u => u.displayName.toLowerCase().includes(query));
+        setCaptionMentionDropdown(filtered);
+        setShowCaptionMentionDropdown(true);
+        setCaptionMentionQuery(query);
+      }
+    } else {
+      setShowCaptionMentionDropdown(false);
+      setCaptionMentionQuery('');
+    }
+  };
+
+  // Insert selected username into caption input
+  const handleSelectCaptionMention = (user) => {
+    const text = caption;
+    const caret = captionInputRef.current?.selection?.start ?? text.length;
+    const before = text.slice(0, caret);
+    const after = text.slice(caret);
+    const newBefore = before.replace(/@([\w]*)$/, `@${user.displayName} `);
+    setCaption(newBefore + after);
+    setShowCaptionMentionDropdown(false);
+    setCaptionMentionQuery('');
+    setTimeout(() => captionInputRef.current?.focus(), 10);
+  };
+
+  // Update selection and measure caret line
+  const handleCaptionSelectionChange = (event) => {
+    setCaptionSelection(event.nativeEvent.selection);
+    // Wait for next frame to measure
+    setTimeout(() => {
+      if (hiddenTextRef.current && captionInputRef.current) {
+        hiddenTextRef.current.measure((x, y, width, height, pageX, pageY) => {
+          captionInputRef.current.measure((ix, iy, iwidth, iheight, ipageX, ipageY) => {
+            // Offset from top of input to caret line
+            setCaptionDropdownOffset(height);
+          });
+        });
+      }
+    }, 0);
   };
 
   const handleSliderPress = (event) => {
@@ -156,7 +271,6 @@ export default function CreatePost() {
 
       if (verificationResponse.ok) {
         const result = await verificationResponse.json();
-        console.log('Content verification result:', result);
       } else {
         console.warn('Content verification API returned non-OK status:', verificationResponse.status);
       }
@@ -185,7 +299,7 @@ export default function CreatePost() {
       const userDocRef = doc(firestore, 'users', user.uid);
       const userDocSnap = await getDoc(userDocRef);
       const userData = userDocSnap.exists() ? userDocSnap.data() : null;
-      const displayName = userData?.displayName || user.displayName || user.email;
+      const displayName = userData?.displayName || user.displayName || 'Anonymous User';
       
       // Upload image to Firebase Storage
       setImageUploading(true);
@@ -225,24 +339,91 @@ export default function CreatePost() {
         retry_count: 0,
         requires_24hr_cooldown: false,
         last_verified: null, // This will be updated by the background service
-        verification_requested: Timestamp.now() // Mark when verification was requested
+        verification_requested: Timestamp.now(), // Mark when verification was requested
+        taggedUserIds: taggedUsers.map(u => u.id),
       };
 
       // Save post to Firebase
       const postRef = await addDoc(collection(firestore, 'posts'), newPost);
-      console.log('Post created successfully with ID:', postRef.id);
-
+      
       // Create notification for pending verification
-      setStatusMessage('Setting up notifications...');
       const notificationData = {
         type: 'post_pending',
         postId: postRef.id,
         message: 'New post created. awaiting verification.',
         timestamp: Timestamp.now(),
-        read: false
+        read: false,
+        triggeringUserAvatar: isAnonymous ? null : (userData?.photoURL || user.photoURL || null),
       };
 
-      await addDoc(collection(firestore, 'users', user.uid, 'notifications'), notificationData);
+      // Add notification and keep its ref for later update
+      const notificationRef = await addDoc(collection(firestore, 'users', user.uid, 'notifications'), notificationData);
+
+      // Notify tagged users (from tag users section)
+      for (const tagged of taggedUsers) {
+        if (tagged.id !== user.uid) {
+          await addDoc(collection(firestore, 'users', tagged.id, 'notifications'), {
+            type: 'tagged_in_post',
+            postId: postRef.id,
+            message: `You were tagged in a post by ${displayName}`,
+            timestamp: Timestamp.now(),
+            read: false,
+            triggeringUserId: user.uid,
+            triggeringUserName: displayName,
+            triggeringUserAvatar: userData?.photoURL || user.photoURL || null,
+          });
+          // Immediately update notificationCount to the correct unread count
+          const notificationsRef = collection(firestore, 'users', tagged.id, 'notifications');
+          const unreadQuery = query(notificationsRef, where('read', '==', false));
+          const unreadSnapshot = await getDocs(unreadQuery);
+          await updateDoc(doc(firestore, 'users', tagged.id), { notificationCount: unreadSnapshot.size });
+        }
+      }
+      // Notify tagged users in caption
+      const mentionedNames = parseMentions(caption);
+      const notifiedUserIds = new Set(taggedUsers.map(u => u.id));
+      for (const name of mentionedNames) {
+        const userObj = allUsers.find(u => u.displayName && u.displayName.toLowerCase() === name.toLowerCase());
+        if (userObj && userObj.id !== user.uid && !notifiedUserIds.has(userObj.id)) {
+          await addDoc(collection(firestore, 'users', userObj.id, 'notifications'), {
+            type: 'tagged_in_post',
+            postId: postRef.id,
+            message: `You were tagged in a post by ${displayName}`,
+            timestamp: Timestamp.now(),
+            read: false,
+            triggeringUserId: user.uid,
+            triggeringUserName: displayName,
+            triggeringUserAvatar: userData?.photoURL || user.photoURL || null,
+          });
+          // Immediately update notificationCount to the correct unread count
+          const notificationsRef = collection(firestore, 'users', userObj.id, 'notifications');
+          const unreadQuery = query(notificationsRef, where('read', '==', false));
+          const unreadSnapshot = await getDocs(unreadQuery);
+          await updateDoc(doc(firestore, 'users', userObj.id), { notificationCount: unreadSnapshot.size });
+          notifiedUserIds.add(userObj.id);
+        }
+      }
+
+      // Listen for post verification status change and update notification
+      const postDocRef = doc(firestore, 'posts', postRef.id);
+      const unsubscribe = onSnapshot(postDocRef, async (docSnap) => {
+        if (docSnap.exists()) {
+          const postData = docSnap.data();
+          if (postData.verification_status === 'Approved') {
+            await updateDoc(notificationRef, {
+              type: 'post_approved',
+              message: 'Your post has been approved and is now visible to others.'
+            });
+            unsubscribe();
+          } else if (postData.verification_status === 'Rejected') {
+            await updateDoc(notificationRef, {
+              type: 'post_rejected',
+              message: `Your post was rejected: ${postData.rejectionReason || 'Content violates community guidelines'}`
+            });
+            unsubscribe();
+          }
+        }
+      });
 
       // Try to trigger content verification (non-blocking)
       setVerifying(true);
@@ -253,7 +434,6 @@ export default function CreatePost() {
       setTimeout(async () => {
         try {
           await triggerContentVerification(image, title, caption);
-          console.log('Content verification triggered successfully');
         } catch (err) {
           console.warn('Content verification failed - background service will handle it:', err.message);
           // This is expected behavior - the background verification service will process the post
@@ -312,15 +492,46 @@ export default function CreatePost() {
           editable={!loading}
         />
        
-        <TextInput
-          style={[styles.input, { height: 120, backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
-          placeholder="Caption *"
-          placeholderTextColor={colors.placeholder}
-          value={caption}
-          onChangeText={setCaption}
-          editable={!loading}
-          multiline
-        />
+        <View style={{ position: 'relative' }}>
+          <TextInput
+            ref={captionInputRef}
+            style={[styles.input, { height: 120, backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+            placeholder="Caption *"
+            placeholderTextColor={colors.placeholder}
+            value={caption}
+            onChangeText={handleCaptionInputChange}
+            onSelectionChange={handleCaptionSelectionChange}
+            editable={!loading}
+            multiline
+          />
+          {/* Hidden text for caret measurement */}
+          <Text
+            ref={hiddenTextRef}
+            style={{
+              position: 'absolute',
+              left: -9999,
+              top: 0,
+              width: '100%',
+              fontSize: 16,
+              lineHeight: 22,
+              fontFamily: Platform.OS === 'ios' ? undefined : 'System',
+              // Match TextInput font styles
+            }}
+            numberOfLines={0}
+          >
+            {caption.slice(0, captionSelection.start) || ' '}
+          </Text>
+          {showCaptionMentionDropdown && captionMentionDropdown.length > 0 && (
+            <View style={{ position: 'absolute', left: 0, right: 0, top: Math.min(captionDropdownOffset + 44, 120 + 44) + 8, backgroundColor: colors.card, borderRadius: 8, zIndex: 10, maxHeight: 176, borderWidth: 1, borderColor: colors.border, overflow: 'scroll' }}>
+              {captionMentionDropdown.slice(0, 6).map(item => (
+                <TouchableOpacity key={item.id} style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }} onPress={() => handleSelectCaptionMention(item)}>
+                  <Image source={item.photoURL ? { uri: item.photoURL } : placeholderImage} style={{ width: 28, height: 28, borderRadius: 14, marginRight: 8 }} />
+                  <Text style={{ color: colors.text }}>{item.displayName}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+        </View>
         <Text style={[styles.sectionTitle, { color: colors.text }]}>Tags (max 3)</Text>
         <View style={styles.tagsRow}>
           <TextInput
@@ -373,6 +584,35 @@ export default function CreatePost() {
         <View style={styles.anonRow}>
           <Text style={[styles.anonLabel, { color: colors.placeholder }]}>Post Anonymously</Text>
           <Switch value={isAnonymous} onValueChange={setIsAnonymous} disabled={loading} />
+        </View>
+        <Text style={[styles.sectionTitle, { color: colors.text }]}>Tag Users (optional)</Text>
+        <View style={{ marginBottom: 12 }}>
+          <TextInput
+            style={[styles.input, { backgroundColor: colors.card, borderColor: colors.border, color: colors.text }]}
+            placeholder="Type a name to tag..."
+            placeholderTextColor={colors.placeholder}
+            value={tagUserQuery}
+            onChangeText={handleTagUserInput}
+            editable={!loading}
+          />
+          {showTagUserDropdown && (
+            <View style={{ position: 'absolute', top: 44, left: 0, right: 0, backgroundColor: colors.card, borderRadius: 8, zIndex: 10, maxHeight: 176, borderWidth: 1, borderColor: colors.border, overflow: 'scroll' }}>
+              {tagUserDropdown.slice(0, 6).map(item => (
+                <TouchableOpacity key={item.id} style={{ flexDirection: 'row', alignItems: 'center', padding: 10 }} onPress={() => handleSelectTagUser(item)}>
+                  <Image source={item.photoURL ? { uri: item.photoURL } : placeholderImage} style={{ width: 28, height: 28, borderRadius: 14, marginRight: 8 }} />
+                  <Text style={{ color: colors.text }}>{item.displayName}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 8 }}>
+            {taggedUsers.map(user => (
+              <TouchableOpacity key={user.id} style={{ backgroundColor: colors.primary, borderRadius: 16, paddingHorizontal: 10, paddingVertical: 4, marginRight: 8, marginBottom: 4, flexDirection: 'row', alignItems: 'center' }} onPress={() => handleRemoveTaggedUser(user.id)}>
+                <Text style={{ color: '#fff', marginRight: 4 }}>@{user.displayName}</Text>
+                <MaterialIcons name="close" size={16} color="#fff" />
+              </TouchableOpacity>
+            ))}
+          </View>
         </View>
         {error && <Text style={[styles.error, { color: colors.error }]}>{error}</Text>}
         {statusMessage && <Text style={[styles.statusMessage, { color: colors.primary }]}>{statusMessage}</Text>}
