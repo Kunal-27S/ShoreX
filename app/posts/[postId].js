@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Alert, Image, Dimensions, KeyboardAvoidingView, Platform, FlatList, Modal } from 'react-native';
 import { useLocalSearchParams, router } from 'expo-router';
 import { auth, firestore } from '../../firebaseConfig';
-import { collection, doc, getDoc, query, orderBy, onSnapshot, addDoc, updateDoc, arrayUnion, arrayRemove, Timestamp, deleteDoc, setDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, getDoc, query, orderBy, onSnapshot, addDoc, updateDoc, arrayUnion, arrayRemove, Timestamp, deleteDoc, setDoc, getDocs, serverTimestamp, where } from 'firebase/firestore';
 import { MaterialIcons } from '@expo/vector-icons';
 import HeaderBar from '../../components/HeaderBar';
 import FooterNav from '../../components/FooterNav';
@@ -420,6 +420,7 @@ export default function PostDetail() {
     { key: 'other', label: 'Other' },
   ];
   const [reportDetails, setReportDetails] = useState('');
+  const [hasReported, setHasReported] = useState(false);
 
   // Fetch all users for autocomplete
   useEffect(() => {
@@ -503,9 +504,29 @@ export default function PostDetail() {
     );
   };
 
+  // Check if current user has already reported this post
+  const checkIfReported = async () => {
+    if (!auth.currentUser || !postId) return;
+    
+    try {
+      const reportsQuery = query(
+        collection(firestore, 'reports'),
+        where('postId', '==', postId),
+        where('reporterId', '==', auth.currentUser.uid)
+      );
+      const querySnapshot = await getDocs(reportsQuery);
+      setHasReported(!querySnapshot.empty);
+    } catch (error) {
+      console.error('Error checking report status:', error);
+    }
+  };
+
   // Fetch post data with real-time listener
   useEffect(() => {
     if (!postId) return;
+    
+    // Check if user has already reported this post
+    checkIfReported();
 
     const postRef = doc(firestore, 'posts', postId);
     const unsubscribePost = onSnapshot(postRef,
@@ -823,8 +844,22 @@ export default function PostDetail() {
                 <MaterialIcons name="delete-outline" size={24} color={colors.error} />
               </TouchableOpacity>
             ) : (
-              <TouchableOpacity onPress={() => setReportModalVisible(true)} style={{ marginLeft: 'auto', padding: 8 }}>
-                <MaterialIcons name="flag" size={24} color={colors.error} />
+              <TouchableOpacity 
+                onPress={() => {
+                  if (hasReported) {
+                    Alert.alert('Already Reported', 'You have already reported this post.');
+                  } else {
+                    setReportModalVisible(true);
+                  }
+                }} 
+                style={{ marginLeft: 'auto', padding: 8, opacity: hasReported ? 0.5 : 1 }}
+                disabled={hasReported}
+              >
+                <MaterialIcons 
+                  name={hasReported ? "flag" : "outlined-flag"} 
+                  size={24} 
+                  color={hasReported ? colors.textTertiary : colors.error} 
+                />
               </TouchableOpacity>
             )}
           </View>
@@ -1097,12 +1132,70 @@ export default function PostDetail() {
                 <Text style={{ color: colors.primary, fontWeight: 'bold', fontSize: 15 }}>Cancel</Text>
               </TouchableOpacity>
               <TouchableOpacity
-                onPress={() => {
-                  // No backend yet, just close modal
-                  setReportModalVisible(false);
-                  setSelectedReportReason('');
-                  setReportDetails('');
-                  Alert.alert('Reported', 'Thank you for reporting. Our team will review this post.');
+                onPress={async () => {
+                  try {
+                    if (!auth.currentUser) {
+                      Alert.alert('Error', 'You must be logged in to report posts');
+                      return;
+                    }
+
+                    // Add to reports collection
+                    const reportsRef = collection(firestore, 'reports');
+                    const reportData = {
+                      postId: post.id,
+                      reason: selectedReportReason,
+                      reporterId: auth.currentUser.uid,
+                      reporterDetails: {
+                        email: auth.currentUser.email || '',
+                        displayName: auth.currentUser.displayName || 'Anonymous',
+                      },
+                      details: selectedReportReason === 'other' ? reportDetails : '',
+                      timestamp: serverTimestamp(),
+                      status: 'pending',
+                      postTitle: post.title || 'Untitled Post',
+                      postCreatorId: post.creatorId || 'unknown',
+                      postCreatedAt: post.createdAt || serverTimestamp()
+                    };
+                    await addDoc(reportsRef, reportData);
+
+                    // Get all reports for this post
+                    const postReportsQuery = query(
+                      collection(firestore, 'reports'),
+                      where('postId', '==', post.id)
+                    );
+                    const reportSnapshot = await getDocs(postReportsQuery);
+                    const totalReports = reportSnapshot.size;
+
+                    // Count reports by category
+                    const reportCounts = reportSnapshot.docs.reduce((acc, doc) => {
+                      const reason = doc.data().reason;
+                      acc[reason] = (acc[reason] || 0) + 1;
+                      return acc;
+                    }, {});
+
+                    // If this is the second or more report, update reported_posts collection
+                    if (totalReports >= 2) {
+                      const reportedPostRef = doc(firestore, 'reported_posts', post.id);
+                      await setDoc(reportedPostRef, {
+                        postId: post.id,
+                        title: post.title,
+                        caption: post.caption,
+                        imageUrl: post.imageUrl,
+                        totalReports: totalReports,
+                        reportCounts: reportCounts, // Contains count by category (offensive, misleading, spam, other)
+                        lastReportedAt: serverTimestamp()
+                      });
+                    }
+
+                    setHasReported(true);
+                    setReportModalVisible(false);
+                    setSelectedReportReason('');
+                    setReportDetails('');
+                    Alert.alert('Report Submitted', 'Thank you for reporting. Our team will review this post.');
+                  } catch (error) {
+                    console.error('Error reporting post:', error);
+                    Alert.alert('Error', 'Failed to submit report. Please try again.');
+                  }
                 }}
                 disabled={!selectedReportReason}
                 style={{ opacity: selectedReportReason ? 1 : 0.5 }}
