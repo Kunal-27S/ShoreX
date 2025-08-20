@@ -3,6 +3,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { Stack, useRouter } from 'expo-router';
 import { ThemeProvider } from '../contexts/ThemeContext';
 import { BackHandler } from 'react-native';
+import { AuthProvider } from '../AuthContext';
 
 export default function RootLayout() {
   const router = useRouter();
@@ -27,7 +28,9 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <ThemeProvider>
-        <Stack screenOptions={{ headerShown: false }} />
+        <AuthProvider>
+          <Stack screenOptions={{ headerShown: false }} />
+        </AuthProvider>
       </ThemeProvider>
     </GestureHandlerRootView>
   );

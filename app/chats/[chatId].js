@@ -379,7 +379,9 @@ function ChatWindow() {
   const { showActionSheetWithOptions } = useActionSheet();
   const [selectedMessages, setSelectedMessages] = useState([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  // removed the old shared showDeleteModal - separated states below
+  const [showDeleteMessagesModal, setShowDeleteMessagesModal] = useState(false);
+  const [showDeleteChatModal, setShowDeleteChatModal] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [highlightedMessageId, setHighlightedMessageId] = useState(null);
   const [showOptionsMenu, setShowOptionsMenu] = useState(false);
@@ -428,7 +430,8 @@ function ChatWindow() {
     setShowDropdown(false);
     switch (option) {
       case 'delete':
-        setShowDeleteModal(true);
+        // open delete chat modal (case 3)
+        setShowDeleteChatModal(true);
         break;
       case 'block':
         Alert.alert(
@@ -477,15 +480,15 @@ function ChatWindow() {
       // Execute all deletions
       await batch.commit();
 
-      // Close the modal
-      setShowDeleteModal(false);
+      // Close the chat-delete modal
+      setShowDeleteChatModal(false);
 
       // Navigate back to chats screen
       router.push('/chats');
     } catch (error) {
       console.error('Error deleting chat:', error);
       Alert.alert('Error', 'Failed to delete chat. Please try again.');
-      setShowDeleteModal(false);
+      setShowDeleteChatModal(false);
     }
   };
   const panXRefs = useRef({}); // Store Animated.Value per message
@@ -565,7 +568,8 @@ function ChatWindow() {
   };
 
   const handleDelete = () => {
-    setShowDeleteModal(true);
+    // open delete messages modal (cases 1 & 2)
+    setShowDeleteMessagesModal(true);
   };
 
   const handleDeleteConfirm = async (forAll) => {
@@ -582,8 +586,8 @@ function ChatWindow() {
       return prevMessages.filter(msg => !messageIdsToDelete.has(msg.id));
     });
     
-    // Close modal and exit selection mode immediately
-    setShowDeleteModal(false);
+    // Close messages-delete modal and exit selection mode immediately
+    setShowDeleteMessagesModal(false);
     exitSelectionMode();
     
     // Then handle backend deletion in background
@@ -1380,6 +1384,9 @@ function ChatWindow() {
     );
   }
 
+  // compute whether selected messages are all owned by current user (used in messages-delete modal)
+  const selectedAllOwn = selectedMessages.length > 0 && selectedMessages.every(msg => msg.senderId === auth.currentUser.uid);
+
   return (
     <KeyboardAvoidingView
       style={[styles.container, { backgroundColor: colors.background }]}
@@ -1444,12 +1451,7 @@ function ChatWindow() {
               >
                 <Text style={styles.dropdownOptionText}>Block</Text>
               </TouchableOpacity>
-              <TouchableOpacity 
-                style={styles.dropdownOption}
-                onPress={() => handleDropdownOptionPress('report')}
-              >
-                <Text style={styles.dropdownOptionText}>Report</Text>
-              </TouchableOpacity>
+             
             </View>
           )}
         </View>
@@ -1558,10 +1560,10 @@ function ChatWindow() {
         )}
       </View>
 
-      {/* Delete Chat Modal */}
+      {/* Delete Chat Modal (case 3) */}
       <DeleteChatModal
-        visible={showDeleteModal}
-        onClose={() => setShowDeleteModal(false)}
+        visible={showDeleteChatModal}
+        onClose={() => setShowDeleteChatModal(false)}
         onDelete={handleDeleteChat}
         colors={colors}
         styles={styles}
@@ -1596,38 +1598,54 @@ function ChatWindow() {
         </View>
       </Modal>
 
-      {/* Delete Chat Confirmation Modal */}
+      {/* Delete Messages Confirmation Modal (cases 1 & 2) */}
       <Modal
-        visible={showDeleteModal}
+        visible={showDeleteMessagesModal}
         transparent={true}
         animationType="fade"
-        onRequestClose={() => setShowDeleteModal(false)}
+        onRequestClose={() => setShowDeleteMessagesModal(false)}
       >
         <TouchableOpacity 
           style={styles.modalOverlay} 
           activeOpacity={1} 
-          onPress={() => setShowDeleteModal(false)}
+          onPress={() => setShowDeleteMessagesModal(false)}
         >
           <TouchableOpacity 
             style={styles.deleteModal} 
             activeOpacity={1} 
             onPress={() => {}} // Prevent closing when tapping inside modal
           >
-            <Text style={styles.deleteModalTitle}>Are you sure to delete the entire chat?</Text>
+            <Text style={styles.deleteModalTitle}>
+              {selectedAllOwn
+                ? 'Delete selected messages?'
+                : 'Delete selected messages for you?'}
+            </Text>
             <View style={styles.deleteModalButtons}>
-               <TouchableOpacity 
+              {/* Delete for Me */}
+              <TouchableOpacity 
                 style={[styles.deleteModalButton, styles.deleteModalButtonDestructive]}
-                onPress={handleDeleteChat}
+                onPress={() => handleDeleteConfirm(false)}
               >
-                <Text style={styles.deleteModalButtonTextDestructive}>Delete</Text>
+                <Text style={styles.deleteModalButtonTextDestructive}>Delete for Me</Text>
               </TouchableOpacity>
+
+              {/* Delete for Everyone (only shown if all selected messages belong to current user) */}
+              {selectedAllOwn && (
+                <TouchableOpacity
+                  style={[styles.deleteModalButton, styles.deleteModalButtonPrimary]}
+                  onPress={() => handleDeleteConfirm(true)}
+                >
+                  <Text style={styles.deleteModalButtonTextPrimary}>Delete for Everyone</Text>
+                </TouchableOpacity>
+              )}
+
+              {/* Cancel */}
               <TouchableOpacity 
                 style={[styles.deleteModalButton, styles.deleteModalButtonSecondary]}
-                onPress={() => setShowDeleteModal(false)}
+                onPress={() => setShowDeleteMessagesModal(false)}
               >
                 <Text style={styles.deleteModalButtonTextSecondary}>Cancel</Text>
               </TouchableOpacity>
-             
             </View>
           </TouchableOpacity>
         </TouchableOpacity>
