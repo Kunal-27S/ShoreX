@@ -9,7 +9,7 @@ export const ProtectedRoute = ({ children }) => {
   useEffect(() => {
     if (!isLoading && !user) {
       // Redirect to login if user is not authenticated
-      router.replace('/login');
+      router.replace('/signin'); // or your login route
     }
   }, [user, isLoading]);
 
