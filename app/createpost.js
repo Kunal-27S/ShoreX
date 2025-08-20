@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ProtectedRoute } from '../ProtectedRoute';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Image, ScrollView, Alert, Switch, FlatList, Platform } from 'react-native';
 import { auth, firestore, storage } from '../firebaseConfig';
 import { collection, addDoc, doc, getDoc, Timestamp, GeoPoint, onSnapshot, updateDoc, getDocs, increment, where, query } from 'firebase/firestore';
@@ -23,7 +24,7 @@ const parseMentions = (text) => {
   return mentions;
 };
 
-export default function CreatePost() {
+function CreatePost() {
   const { colors } = useTheme();
   const [title, setTitle] = useState('');
   const [caption, setCaption] = useState('');
@@ -639,6 +640,14 @@ export default function CreatePost() {
       </ScrollView>
       <FooterNav />
     </View>
+  );
+}
+
+export default function ProtectedCreatePostWrapper(props) {
+  return (
+    <ProtectedRoute>
+      <CreatePost {...props} />
+    </ProtectedRoute>
   );
 }
 

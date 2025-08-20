@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ProtectedRoute } from '../ProtectedRoute';
 import {
   View,
   Text,
@@ -208,7 +209,7 @@ function getStyles(colors) {
   });
 }
 
-export default function ChatsPage() {
+function ChatsPage() {
   const router = useRouter();
   const [chats, setChats] = useState([]);
   const [loadingChats, setLoadingChats] = useState(true);
@@ -517,4 +518,12 @@ export default function ChatsPage() {
       </TouchableOpacity>
     </View>
   );
-} 
+}
+
+export default function ProtectedChatsPageWrapper(props) {
+  return (
+    <ProtectedRoute>
+      <ChatsPage {...props} />
+    </ProtectedRoute>
+  );
+}

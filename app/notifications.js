@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ProtectedRoute } from '../ProtectedRoute';
 import { View, Text, FlatList, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Image, RefreshControl } from 'react-native';
 import { auth, firestore } from '../firebaseConfig';
 import { collection, query, orderBy, onSnapshot, doc, getDoc, setDoc, deleteDoc, Timestamp, writeBatch, updateDoc } from 'firebase/firestore';
@@ -224,7 +225,7 @@ function getStyles(colors) {
   });
 }
 
-export default function Notifications() {
+function Notifications() {
   const { colors } = useTheme();
   const styles = getStyles(colors);
   const [notifications, setNotifications] = useState([]);
@@ -532,4 +533,12 @@ export default function Notifications() {
       <FooterNav />
     </View>
   );
-} 
+}
+
+export default function ProtectedNotificationsWrapper(props) {
+  return (
+    <ProtectedRoute>
+      <Notifications {...props} />
+    </ProtectedRoute>
+  );
+}

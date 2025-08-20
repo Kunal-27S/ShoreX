@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ProtectedRoute } from '../ProtectedRoute';
 import { View, Text, StyleSheet, ActivityIndicator, FlatList, TouchableOpacity, ScrollView, Dimensions, Image } from 'react-native';
 import { firestore } from '../firebaseConfig';
 import { collection, query, orderBy, getDocs } from 'firebase/firestore';
@@ -52,7 +53,7 @@ function normalizeTag(tag) {
   return variations[normalized] || normalized;
 }
 
-export default function Explore() {
+function Explore() {
   const { colors } = useTheme();
   const [tab, setTab] = useState(0); // 0: Popular, 1: Tags
   const [popularPosts, setPopularPosts] = useState([]);
@@ -224,6 +225,14 @@ export default function Explore() {
         <Image source={aiStar} style={{ width: 50, height: 50, resizeMode: 'contain', tintColor: 'white' }} />
       </TouchableOpacity>
     </View>
+  );
+}
+
+export default function ProtectedExploreWrapper(props) {
+  return (
+    <ProtectedRoute>
+      <Explore {...props} />
+    </ProtectedRoute>
   );
 }
 

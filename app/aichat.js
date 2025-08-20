@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { ProtectedRoute } from '../ProtectedRoute';
 import { View, Text, TextInput, TouchableOpacity, ActivityIndicator, KeyboardAvoidingView, Platform, FlatList, StyleSheet, Alert, Image } from 'react-native';
 import * as Location from 'expo-location';
 import { auth } from '../firebaseConfig';
@@ -133,7 +134,7 @@ function getStyles(colors) {
   });
 }
 
-export default function AIChatScreen() {
+function AIChatScreen() {
   const { colors } = useTheme();
   const styles = getStyles(colors);
   const [messages, setMessages] = useState([]);
@@ -308,4 +309,12 @@ export default function AIChatScreen() {
       )}
     </KeyboardAvoidingView>
   );
-} 
+}
+
+export default function ProtectedAIChatScreenWrapper(props) {
+  return (
+    <ProtectedRoute>
+      <AIChatScreen {...props} />
+    </ProtectedRoute>
+  );
+}

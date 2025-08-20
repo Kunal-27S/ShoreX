@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { ProtectedRoute } from '../ProtectedRoute';
 import { View, Text, StyleSheet, ActivityIndicator, Dimensions, TouchableOpacity, ScrollView, Image, Modal } from 'react-native';
 import MapView, { Marker } from 'react-native-maps';
 import { firestore } from '../firebaseConfig';
@@ -39,7 +40,7 @@ function formatTimeRemaining(expiresAt) {
   return `${seconds}s`;
 }
 
-export default function MapViewScreen() {
+function MapViewScreen() {
   const { colors } = useTheme();
   const [userPosition, setUserPosition] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -287,6 +288,14 @@ export default function MapViewScreen() {
         <Image source={aiStar} style={{ width: 50, height: 50, resizeMode: 'contain', tintColor: 'white' }} />
       </TouchableOpacity>
     </View>
+  );
+}
+
+export default function ProtectedMapViewScreenWrapper(props) {
+  return (
+    <ProtectedRoute>
+      <MapViewScreen {...props} />
+    </ProtectedRoute>
   );
 }
 

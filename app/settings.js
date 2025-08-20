@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ProtectedRoute } from '../ProtectedRoute';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch, Alert, ActivityIndicator, Image, TextInput } from 'react-native';
 import { auth, firestore, storage } from '../firebaseConfig';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
@@ -12,7 +13,7 @@ import { useTheme } from '../contexts/ThemeContext';
 
 const anonymousAvatar = 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png';
 
-export default function Settings() {
+function Settings() {
   const { darkMode, toggleTheme, colors } = useTheme();
   const [settings, setSettings] = useState({
     radius: '5',
@@ -324,6 +325,14 @@ export default function Settings() {
       </ScrollView>
       <FooterNav />
     </View>
+  );
+}
+
+export default function ProtectedSettingsWrapper(props) {
+  return (
+    <ProtectedRoute>
+      <Settings {...props} />
+    </ProtectedRoute>
   );
 }
 

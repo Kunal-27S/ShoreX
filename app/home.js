@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { ProtectedRoute } from '../ProtectedRoute';
 import { View, Text, TextInput, TouchableOpacity, FlatList, StyleSheet, ActivityIndicator, Alert, Image, ScrollView, Dimensions } from 'react-native';
 import { signOut } from 'firebase/auth';
 import { auth, firestore } from '../firebaseConfig';
@@ -56,7 +57,7 @@ function formatTimeAgo(createdAt) {
   return `${diffHr} hours ago`;
 }
 
-export default function Home() {
+function Home() {
   const { colors } = useTheme();
   const [searchQuery, setSearchQuery] = useState('');
   const [radius, setRadius] = useState('10');
@@ -471,6 +472,14 @@ export default function Home() {
          <Image source={aiStar} style={{ width: 50, height: 50, resizeMode: 'contain', tintColor: 'white' }} />
       </TouchableOpacity>
     </View>
+  );
+}
+
+export default function ProtectedHomeWrapper(props) {
+  return (
+    <ProtectedRoute>
+      <Home {...props} />
+    </ProtectedRoute>
   );
 }
 

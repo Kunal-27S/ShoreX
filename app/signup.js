@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
+import { PublicRoute } from '../ProtectedRoute';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Animated, Dimensions, ScrollView, Modal, Pressable } from "react-native";
 import { router } from "expo-router";
 import { auth, firestore } from "../firebaseConfig";
@@ -58,7 +59,7 @@ function MarqueeRow({ images, duration, reverse, topOffset, imageSize }) {
   );
 }
 
-export default function SignUp() {
+function SignUp() {
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -328,6 +329,14 @@ export default function SignUp() {
         </View>
       </ScrollView>
     </View>
+  );
+}
+
+export default function PublicSignUpWrapper(props) {
+  return (
+    <PublicRoute>
+      <SignUp {...props} />
+    </PublicRoute>
   );
 }
 

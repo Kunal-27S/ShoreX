@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ProtectedRoute } from '../ProtectedRoute';
 import { View, Text, StyleSheet, ActivityIndicator, Image, TouchableOpacity, FlatList, Dimensions, ScrollView, Modal, TextInput, Animated, Easing } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { firestore, auth } from '../firebaseConfig';
@@ -14,7 +15,7 @@ const aiStar = require('../assets/images/aistar.png');
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const placeholderImage = require('../assets/images/placeholder.png');
 
-export default function Profile() {
+function Profile() {
   const { colors } = useTheme();
   const [userProfile, setUserProfile] = useState(null);
   const [userPosts, setUserPosts] = useState([]);
@@ -367,6 +368,14 @@ export default function Profile() {
         <Image source={aiStar} style={{ width: 50, height: 50, resizeMode: 'contain', tintColor: 'white' }} />
       </TouchableOpacity>
     </View>
+  );
+}
+
+export default function ProtectedProfileWrapper(props) {
+  return (
+    <ProtectedRoute>
+      <Profile {...props} />
+    </ProtectedRoute>
   );
 }
 
