@@ -93,7 +93,7 @@ export default function HeaderBar() {
       {/* Left: Logo + App Name */}
       <View style={styles.leftRow}>
         <Image source={logo} style={styles.logo} />
-        <Text style={[styles.title, { color: colors.text }]}>Local Pulse</Text>
+        <Text style={[styles.title, { color: colors.text }]}>Ocean Pulse</Text>
       </View>
       {/* Right: 2 icons */}
       <View style={styles.rightRow}>

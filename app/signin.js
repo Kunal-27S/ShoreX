@@ -189,7 +189,7 @@ function SignIn() {
       {/* Foreground Content */}
       <ScrollView contentContainerStyle={styles.contentContainer} keyboardShouldPersistTaps="handled">
         <View style={styles.formBox}>
-          <Text style={styles.title}>Welcome Back</Text>
+          <Text style={styles.title}>Welcome Back to Ocean Pulse</Text>
           <Text style={styles.subtitle}>Sign in to continue to your dashboard</Text>
           {error && (
             <Text style={[styles.errorText, error.includes('verification email has been sent') && styles.successText]}>

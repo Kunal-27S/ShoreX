@@ -63,7 +63,7 @@ export default function OnboardingStepper({ visible, onClose }) {
   const renderStep1 = () => (
     <View style={styles.step1Container}>
       <View style={styles.step1Top}>
-        <Text style={styles.stepTitle}>Welcome to Local Pulse!</Text>
+        <Text style={styles.stepTitle}>Welcome to Ocean Pulse!</Text>
         <View style={styles.step1Bottom}>
         <Carousel
           width={160}
@@ -132,7 +132,7 @@ export default function OnboardingStepper({ visible, onClose }) {
         return (
           <View style={styles.stepContent}>
             <Text style={styles.stepTitle}>You're All Set!</Text>
-            <Text style={styles.stepSubtitle}>Experience the local pulse and become a part of it.</Text>
+            <Text style={styles.stepSubtitle}>Experience the ocean pulse and become a part of it.</Text>
           </View>
         );
       default:

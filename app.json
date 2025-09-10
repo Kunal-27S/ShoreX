@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Local Pulse",
-    "slug": "auth-testing",
+    "name": "Ocean Pulse",
+    "slug": "ocean-pulse",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/logo.png",
@@ -17,7 +17,7 @@
         "foregroundImage": "./assets/images/logo.png",
         "backgroundColor": "#ffffff"
       },
-      "package": "com.localpulse.app",
+      "package": "com.oceanpulse.app",
       "googleServicesFile": "./google-services.json",
       "config": {
         "googleMaps": {

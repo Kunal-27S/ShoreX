@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ProtectedRoute } from '../ProtectedRoute';
 import { View, Text, StyleSheet, ActivityIndicator, Dimensions, TouchableOpacity, ScrollView, Image, Modal } from 'react-native';
-import MapView, { Marker } from 'react-native-maps';
+import CustomMap from '../components/MapView';
 import { firestore } from '../firebaseConfig';
 import { collection, getDocs, Timestamp } from 'firebase/firestore';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -203,34 +203,21 @@ function MapViewScreen() {
       </View>
       
       <View style={{ flex: 1 }}>
-        <MapView
-          provider="google"
-          style={{ flex: 1 }}
-          initialRegion={{
-            latitude: mapCenter.latitude,
-            longitude: mapCenter.longitude,
-            latitudeDelta: userPosition ? 0.05 : 0.1,
-            longitudeDelta: userPosition ? 0.05 : 0.1,
-          }}
-          showsUserLocation={!!userPosition}
-          showsMyLocationButton={true}
-          showsCompass={true}
-          showsScale={true}
-        >
-          {filteredPosts.map(post => (
-            <Marker
-              key={post.id}
-              coordinate={{ 
-                latitude: post.location.latitude, 
-                longitude: post.location.longitude 
-              }}
-              onPress={() => handleMarkerPress(post)}
-              pinColor={colors.primary}
-            >
-              <MaterialIcons name="location-on" size={32} color={colors.primary} />
-            </Marker>
-          ))}
-        </MapView>
+        <CustomMap
+          region={mapCenter}
+          onRegionChange={setUserPosition}
+          userLocation={userPosition}
+          markers={filteredPosts.map(post => ({
+            coordinate: {
+              latitude: post.location?.latitude || 0,
+              longitude: post.location?.longitude || 0,
+            },
+            title: post.title,
+            description: post.description,
+            onPress: () => handleMarkerPress(post)
+          }))}
+          style={styles.map}
+        />
       </View>
       
       {selectedPost && (
